@@ -1,3 +1,8 @@
+import os
+
+import olefile
+from PIL.Image import Image
+from pytesseract import pytesseract
 
 
 # ---------------------------
@@ -9,6 +14,18 @@ class ImageProcessor:
     def __init__(self, output_dir="output_images"):
         self.output_dir = output_dir
         os.makedirs(self.output_dir, exist_ok=True)
+
+    def process_extracted_images(self):
+        image_texts = []
+        for img_file in os.listdir(self.output_dir):
+            if img_file.lower().endswith((".png", ".jpg", ".jpeg")):
+                text = self.ocr_process(os.path.join(self.output_dir, img_file))
+                if text:
+                    image_texts.append({
+                        "image": img_file,
+                        "text": text
+                    })
+        return image_texts
 
     def extract_images_docx(self, doc):
         """
@@ -49,7 +66,42 @@ class ImageProcessor:
             print(f"Error extracting images from PPTX: {e}")
         return image_count
 
-    def ocr_process(self, image_path):
+    def extract_images_hwp(self, hwp_file_path):
+        """
+        HWP 파일에서 이미지를 추출합니다.
+        :param hwp_file_path:
+        :return:
+        """
+        image_count = 0
+        try:
+            with olefile.OleFileIO(hwp_file_path) as hwp:
+                if 'Bindata' not in hwp.listdir():
+                    return 0
+
+            for entry in hwp.listdir():
+                if entry[0].startswith('BinData/BIN'):
+                    bindata = hwp.openstream(entry).read()
+                    if bindata[:4] == b'\xFF\xD8\xFF\xE0':  # JPEG 시그니처
+                        ext = 'jpg'
+                    elif bindata[:8] == b'\x89\x50\x4E\x47\x0D\x0A\x1A\x0A':  # PNG 시그니처
+                        ext = 'png'
+                    else:
+                        continue
+
+                    image_count += 1
+                    img_path = os.path.join(
+                        self.output_dir,
+                        f"hwp_image_{image_count}.{ext}"
+                    )
+                    with open(img_path, "wb") as f:
+                        f.write(bindata)
+            return image_count
+        except Exception as e:
+            print(f"HWP 이미지 추출 오류: {e}")
+            return 0
+
+
+def ocr_process(self, image_path):
         """
         주어진 이미지 파일에 대해 OCR 수행하여 텍스트를 추출
         """

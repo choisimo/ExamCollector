@@ -1,3 +1,11 @@
+import os
+from datetime import time
+from docx import Document
+from pptx import Presentation
+import olefile
+from hwp5 import hwp5txt
+from components.comp_image.extractor import ImageProcessor
+
 
 class DocumentParser:
     def __init__(self, processor: ImageProcessor):
@@ -46,15 +54,48 @@ class DocumentParser:
         for slide in prs.slides:
             slide_text = []
             for shape in slide.shapes:
-                if shape.has_text_frame:
-                    slide_text.append(shape.text.strip())
+                if hasattr(shape, "text"):
+                    text = shape.text.strip()
+                    if text:
+                        slide_text.append(text)
             if slide_text:
-                contents.append({"type": "slide", "content": slide_text})
+                contents.append({"type": "slide", "content": "\n".join(slide_text)})
         return {
             "metadata": self._get_metadata(file_path),
             "contents": contents,
             "images": image_count
         }
+
+
+    def parse_hwp(self, file_path):
+        """
+        HWP 파일을 파싱합니다.
+        - 텍스트는 각 문단별로 추출하여 리스트에 저장
+        - 이미지 추출은 ImageProcessor.extract_images_hwp()
+        메타데이터(파일명, 파일 크기, 최종 수정 시간)도 함께 반환
+        """
+        try:
+            contents = []
+            image_count = self.processor.extract_images_hwp(file_path)
+
+            # 텍스트 추출
+            with open(file_path, "rb") as f:
+                hwp_text = hwp5txt(f)
+                text_content = hwp_text.get_text()
+
+                # 문단 단위 분리
+                paragraphs = [p.strip() for p in text_content.split('\x0D') if p.strip()]
+                for para in paragraphs:
+                    contents.append({"type": "text", "content": para})
+
+            return {
+                "metadata": self._get_metadata(file_path),
+                "contents": contents,
+                "images": image_count
+            }
+        except Exception as e:
+            raise Exception(f"HWP 파싱 오류: {e}")
+
 
     def _get_metadata(self, file_path):
         """
