@@ -1,0 +1,16 @@
+# 데이터 경로
+path: ./data
+train: ./data/images/math/train # 학습 데이터
+val: ./data/images/math/val     # 검증 데이터
+
+# class info
+names:
+  0: question # 질문
+  1: answer # 답변
+  2: figure # 그림
+  3: etc    # 기타
+  4: q_num  # 문제 번호
+  5: q_type  # 문제 유형 (선택, 단답, 서술)
+
+# class 개수
+nc: 6

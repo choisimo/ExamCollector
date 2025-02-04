@@ -1,0 +1,27 @@
+{
+  "detector_model_path": "yolov8n-seg.pt",
+  "llm_model": "deepseek-ai/Janus-Pro-7B",
+  "data": {
+    "train": "./data/images/math/train",
+    "val": "./data/images/math/val"
+  },
+  "class_info": {
+    "0": "question",
+    "1": "answer",
+    "2": "figure",
+    "3": "etc",
+    "4": "q_num",
+    "5": "q_type"
+  },
+  "nc": 6,
+  "training": {
+    "epochs": 100,
+    "batch_size": 16,
+    "imgsz": 640,
+    "device": "0"
+  },
+  "other_settings": {
+    "use_gpu": true,
+    "log_level": "INFO"
+  }
+}

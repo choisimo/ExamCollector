@@ -1,0 +1,7 @@
+question
+answer
+figure
+etc
+q_area
+q_num
+q_type
