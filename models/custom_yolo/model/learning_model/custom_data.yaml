@@ -1,16 +1,20 @@
-# 데이터 경로
-path: ./data
-train: ./data/images/math/train # 학습 데이터
-val: ./data/images/math/val     # 검증 데이터
+# data.yaml
 
-# class info
+# (선택) base 경로
+path: C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/
+
+# 필수: 학습/검증 이미지와 라벨 경로
+train: images/train
+val: images/val
+
+# (필수) 클래스 이름(또는 `nc: 6` 식으로 클래스 개수만 명시)
 names:
-  0: question # 질문
-  1: answer # 답변
-  2: figure # 그림
-  3: etc    # 기타
-  4: q_num  # 문제 번호
-  5: q_type  # 문제 유형 (선택, 단답, 서술)
+  0: question
+  1: answer
+  2: figure
+  3: etc
+  4: q_num
+  5: q_type
 
-# class 개수
+# (선택) 클래스 개수. YOLOv8은 names 또는 nc가 반드시 있어야 함
 nc: 6

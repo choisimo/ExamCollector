@@ -66,6 +66,7 @@ class DocumentProcessorApp:
     def log(self, message):
         self.root.after(0, self._update_log, message)
 
+
     def _update_log(self, message):
         self.log_area.config(state=tk.NORMAL)
         self.log_area.insert(tk.END, message + "\n")
