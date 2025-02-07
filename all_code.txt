@@ -1,0 +1,2474 @@
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/app_logger.py
+===============================
+import logging
+import sys
+import traceback
+
+
+class AppLogger:
+    def __init__(self):
+        # 로그 파일 이름, 로그 레벨, 포맷 설정 (파일 매개변수는 filename로 지정)
+        logging.basicConfig(
+            filename='app_error.log',
+            level=logging.DEBUG,
+            format='%(asctime)s - %(levelname)s - %(message)s'
+        )
+    def my_exception_hook(self, exctype, value, tb):
+        # 예외 정보를 문자열로 변환
+        error_message = "".join(traceback.format_exception(exctype, value, tb))
+        # 콘솔에 출력
+        print("Uncaught exception:", error_message)
+        # 로그 파일에 기록
+        logging.error("Uncaught exception:\n%s", error_message)
+        # 기본 예외 후크 호출 (필요 시)
+        sys.__excepthook__(exctype, value, tb)
+
+    def log_exception(self, e):
+        # 예외 정보를 문자열로 변환
+        print("Logging exception:", e)
+
+
+# AppLogger 인스턴스 생성 후 전역 예외 후크 설정
+logger = AppLogger()
+sys.excepthook = logger.my_exception_hook
+
+
+def conversion_wrapper(func):
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except Exception as e:
+            logger.log_exception(e)
+            print(f"Error converting document: {e}")
+            raise RuntimeError(f"변환 실패: {str(e)}") from e
+    return wrapper
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/device.py
+===============================
+import psutil
+import torch
+
+
+class DeviceChecker:
+    def __init__(self):
+        pass
+
+    def validate_training_device(self, device):
+        if device == "cuda":
+            if not torch.cuda.is_available():
+                raise ValueError(
+                    "CUDA selected but not available!\n"
+                    "1. Check NVIDIA drivers\n"
+                    "2. Verify PyTorch CUDA version\n"
+                    "3. Consider using CPU if no GPU available"
+                )
+
+        elif device == "hip":
+            if not hasattr(torch.backends, 'rocmm') or not torch.backends.rocmm.is_available():
+                raise ValueError(
+                    "ROCm selected but not available!\n"
+                    "1. Check AMD GPU drivers\n"
+                    "2. Verify ROCm installation\n"
+                    "3. Consider using CPU if no AMD GPU"
+                )
+
+        return True
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/memory_monitor.py
+===============================
+import time
+import GPUtil
+import pyqtgraph as pg
+import psutil
+import torch
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer
+from PyQt5.QtWidgets import QVBoxLayout, QWidget
+
+
+class ResourceGraphWidget(QWidget):
+    def __init__(self, interval=1000, parent=None):
+        """
+        interval: 업데이트 간격 (밀리초)
+        """
+        super().__init__(parent)
+        self.layout = QVBoxLayout(self)
+        self.plot_widget = pg.PlotWidget(title="리소스 사용량")
+        self.layout.addWidget(self.plot_widget)
+
+        # X축 (시간, 초)와 각 데이터(Y축) 저장용 리스트
+        self.x_data = []  # 시간 (초 단위)
+        self.y_cpu = []   # CPU 사용률 (%)
+        self.y_ram = []   # RAM 사용률 (%)
+        self.y_gpu = []   # 첫 번째 GPU 사용률 (%)
+
+        self.ptr = 0
+
+        # 각 데이터에 대한 plot curve 생성 (색상과 레이블 지정)
+        self.curve_cpu = self.plot_widget.plot(pen=pg.mkPen('y', width=2), name="CPU 사용률")
+        self.curve_ram = self.plot_widget.plot(pen=pg.mkPen('g', width=2), name="RAM 사용률")
+        self.curve_gpu = self.plot_widget.plot(pen=pg.mkPen('r', width=2), name="GPU 사용률")
+
+        # 타이머를 설정하여 주기적으로 데이터를 업데이트
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self.update_data)
+        self.timer.start(interval)
+
+        # 범례를 추가 (PlotWidget에서 addLegend를 사용)
+        self.plot_widget.addLegend()
+        self.plot_widget.setLabel('left', '사용률', '%')
+        self.plot_widget.setLabel('bottom', '시간', 's')
+
+    def update_data(self):
+        # 현재 시간(초) 증가
+        self.x_data.append(self.ptr)
+        self.ptr += 1
+
+        # CPU 사용률 (psutil.cpu_percent()는 0~100 사이의 값)
+        cpu_usage = psutil.cpu_percent(interval=None)
+        self.y_cpu.append(cpu_usage)
+
+        # RAM 사용률 (virtual_memory().percent는 사용률 %)
+        ram_usage = psutil.virtual_memory().percent
+        self.y_ram.append(ram_usage)
+
+        # GPU 사용률 (여기서는 첫 번째 GPU의 load 값을 사용; load는 0~1 사이의 값 -> 100*load)
+        gpus = GPUtil.getGPUs()
+        if gpus:
+            gpu_usage = gpus[0].load * 100  # 첫번째 GPU의 로딩률 (%)
+        else:
+            gpu_usage = 0
+        self.y_gpu.append(gpu_usage)
+
+        # 데이터가 너무 많아지면 마지막 100개 데이터만 유지
+        if len(self.x_data) > 100:
+            self.x_data = self.x_data[-100:]
+            self.y_cpu = self.y_cpu[-100:]
+            self.y_ram = self.y_ram[-100:]
+            self.y_gpu = self.y_gpu[-100:]
+
+        # 각 curve 업데이트
+        self.curve_cpu.setData(self.x_data, self.y_cpu)
+        self.curve_ram.setData(self.x_data, self.y_ram)
+        self.curve_gpu.setData(self.x_data, self.y_gpu)
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/observer_pattern/observer_registry.py
+===============================
+from collections import defaultdict
+
+
+"""
+Observer-pattern register and notify class
+=> register: register a callback function to a key_path
+=> notify: notify all callback functions registered to a key_path
+"""
+
+
+class ObserverRegistry:
+    _observers = defaultdict(list)
+
+    @classmethod
+    def register(cls, key_path, callback):
+        cls._observers[key_path].append(callback)
+
+    @classmethod
+    def notify(cls, key_path, value):
+        for cb in cls._observers.get(key_path, []):
+            cb(value)
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/settings/auto_sync.py
+===============================
+from PyQt5.QtCore import QTimer
+
+
+class SettingSyncronizer:
+    def __init__(self, interval=300):
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.sync)
+        self.timer.start(interval * 1000)
+
+    def sync(self):
+        """
+        DB 와 SettingsManager의 설정을 동기화합니다.
+        DB <-> Cache
+        """
+        pass
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/settings/settings_manager.py
+===============================
+from PyQt5.QtCore import QObject, pyqtSignal
+
+from models.custom_yolo.core.services.db_service import DBService
+
+
+class SettingsManager(QObject):
+    setting_changed = pyqtSignal(str, object)
+
+    def __init__(self):
+        super().__init__()
+        self._cache = {}
+        self.db = DBService()
+        self._load_initial_settings()
+
+    def _load_initial_settings(self):
+        training_settings = self.db.get_training_config()
+        labeling_settings = self.db.get_labeling_config()
+
+        self.cache['training'] = training_settings
+        self.cache['labeling'] = labeling_settings
+
+    def get(self, section, key, default=None):
+        # ex) get('training', 'device')
+        return self._cache.get(section, {}).get(key, default)
+
+    def update(self, section, key, value):
+        self._cache.setdefault(section, {})[key] = value
+        self.setting_changed.emit(f"{section}.{key}", value)
+
+    def save_all(self):
+        self.db.update_training_config(self.cache['training'])
+        self.db.update_labeling_config(self.cache['labeling'])
+        self._load_initial_settings()
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/settings/settings_registry.py
+===============================
+from PyQt5.QtWidgets import QButtonGroup
+
+class SettingsCore:
+
+    def __init__(self, db_service):
+        self.db = db_service
+
+    def load_settings(self):
+        data = {}
+        training_settings = self.db.get_training_config()
+        labeling_settings = self.db.get_labeling_config()
+        data['training'] = training_settings
+        data['labeling'] = labeling_settings
+        return data
+
+    def save_training_config(self, new_config):
+        row = self.db.get_training_config()
+        if row:
+            self.db.update_training_config(row['id'], new_config['data_yaml'])
+        else:
+            self.db.insert_training_config(
+                epochs=50, batch_size=16, device="cpu", imgsz=640,
+                YOLO_model="yolov8n.pt", custom_model_path="", data_yaml=path,
+                data_config_id=1, results_config_id=1, model_paths_id=1
+            )
+
+
+class SettingsUI:
+    """
+    Settings UI를 구성하는 클래스입니다.
+    """
+    def __init__(self):
+        self.rb_cpu = None
+        self.rb_cuda = None
+        self.rb_hip = None
+
+        self.device_group = QButtonGroup()
+
+    def setup_device_radios(self):
+        for btn in [self.rb_cpu, self.rb_cuda, self.rb_hip]:
+            self.device_group.addButton(btn)
+
+
+class SettingsController:
+    """
+    Settings UI와 Core를 연결하는 클래스입니다.
+    """
+    def __init__(self, core: SettingsCore, ui: SettingsUI):
+        self.core = core
+        self.ui = ui
+        self._connect_signals()
+
+    def _connect_signals(self):
+        self.ui.device_group.buttonClicked.connect(self.on_device_radio_clicked)
+
+    def _update_device_setting(self, btn):
+        device_type = None
+        if btn == self.ui.rb_cpu:
+            device_type = "cpu"
+        elif btn == self.ui.rb_cuda:
+            device_type = "cuda"
+        elif btn == self.ui.rb_hip:
+            device_type = "hip"
+        # DB update
+        training = self.core.load_settings().get('training', {})
+        training['device'] = device_type
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/settings/settings_versioning.py
+===============================
+import hashlib
+from datetime import datetime
+
+
+class SettingsVersionControl:
+    def __init__(self):
+        self.history = []
+
+    def commit(self, changes):
+        version_info = {
+            'timestamp': datetime.now(),
+            'changes': changes,
+            'hash': self._generate_hash(changes)
+        }
+
+    def rollback(self, steps: int = 1):
+        # rollback to previous version
+        pass
+
+    def _generate_hash(self, changes):
+        return hashlib.md5(str(changes).encode('utf-8')).hexdigest()
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/common/settings/validators.py
+===============================
+
+class SettingValidator:
+    _valid_rules = {
+        'training.batch_size': lambda v: 1 <= v <= 256,
+        'training.epochs': lambda v: 1 <= v <= 100,
+        'training.device': lambda v: v in ['cpu', 'cuda', 'hip'],
+    }
+
+    @classmethod
+    def validate_settings(cls, key_path, value):
+        if key_path in cls._valid_rules:
+            if not cls._valid_rules[key_path](value):
+                raise ValueError(f"Invalid value for {key_path}: {value}")
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/core/services/convert_document.py
+===============================
+import os
+import atexit
+import comtypes.client
+import win32com.client as win32
+from pdf2image import convert_from_path
+from pathlib import Path
+
+
+# 배치 변환 함수 (여러 PDF 파일을 동시에 변환)
+from concurrent.futures import ThreadPoolExecutor, as_completed
+
+from models.custom_yolo.common.app_logger import conversion_wrapper
+from models.custom_yolo.core.services.db_service import DBService
+
+
+
+class DocuConverter:
+    def __init__(self):
+        # COM 객체는 인스턴스 변수로 관리
+        self.word_app = comtypes.client.CreateObject('Word.Application')
+        self.word_app.Visible = False
+        self.hwp_app = None
+        atexit.register(self.cleanup_com)
+
+    @conversion_wrapper
+    def cleanup_com(self):
+        try:
+            if self.word_app:
+                self.word_app.Quit()
+            if self.hwp_app:
+                self.hwp_app.Quit()
+        except Exception as e:
+            print(f"COM 객체 정리 오류: {e}")
+
+    @staticmethod
+    def _sanitize_path(path: str) -> str:
+        # 절대 경로로 변환하고, Windows와 Linux 모두에서 사용할 수 있도록 함.
+        return os.path.abspath(path)
+
+    # --------------------------------------------------------------------------
+    # PDF -> JPG
+    # --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def pdf_to_jpg(pdf_path: str, output_dir: str = None, dpi: int = 300, poppler_path: str = None) -> list:
+        if not os.path.exists(pdf_path):
+            raise FileNotFoundError(f"PDF 파일을 찾을 수 없습니다: {pdf_path}")
+
+        # DB 값 가져오기
+        db_service = DBService()
+        row = db_service.get_document_converter()  # 예: id=1 레코드
+
+        # 1) output_dir이 지정되지 않았다면 DB나 pdf_path 폴더를 fallback
+        if not output_dir:
+            base_name = os.path.splitext(os.path.basename(pdf_path))[0]
+            if row and row.get("output_dir"):
+                output_dir = os.path.join(row["output_dir"], base_name)
+            else:
+                output_dir = os.path.join(os.path.dirname(pdf_path), base_name)
+        os.makedirs(output_dir, exist_ok=True)
+
+        # 2) poppler_path가 지정되지 않았다면 DB -> fallback
+        if not poppler_path:
+            if row and row.get("poppler_path"):
+                poppler_path = row["poppler_path"]
+            else:
+                # 예시 기본 경로
+                print("Poppler 경로가 지정되지 않았습니다. 기본 경로 사용.")
+                poppler_path = r"C:\Program Files\poppler-21.03.0\Library\bin"
+
+        poppler_path = os.path.normpath(poppler_path)
+
+        # pdfinfo.exe 존재 여부 검사
+        if not os.path.exists(os.path.join(poppler_path, "pdfinfo.exe")):
+            raise RuntimeError(f"Poppler 유틸리티(pdfinfo.exe)가 발견되지 않았습니다: {poppler_path}")
+
+        # 3) pdf2image 변환
+        try:
+            images = convert_from_path(
+                pdf_path=pdf_path,
+                dpi=dpi,
+                output_folder=output_dir,
+                fmt='jpg',  # 여기서는 'jpg' 고정
+                thread_count=4,  # 여기서는 4 고정
+                poppler_path=poppler_path
+            )
+        except Exception as e:
+            raise RuntimeError(f"PDF 변환 실패: {str(e)}")
+
+        # 각 이미지 객체는 filename 속성을 가짐
+        filenames = [img.filename for img in images if hasattr(img, 'filename')]
+        if not filenames:
+            raise RuntimeError("PDF 변환 실패: 변환된 JPG 파일이 없습니다.")
+        return filenames
+
+    # --------------------------------------------------------------------------
+    # Word -> PDF
+    # --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def word_to_pdf(word_path: str, output_path: str = None, poppler_path=None) -> str:
+        if not os.path.exists(word_path):
+            raise FileNotFoundError(f"Word 파일을 찾을 수 없습니다: {word_path}")
+
+        # Windows 형식의 경로로 출력 PDF 경로 생성
+        output_path = output_path or str(Path(word_path).with_suffix('.pdf'))
+        word_path = DocuConverter._sanitize_path(word_path)
+
+        word = comtypes.client.CreateObject('Word.Application')
+        word.Visible = False
+        try:
+            doc = word.Documents.Open(word_path)
+            doc.SaveAs(output_path, FileFormat=17)
+            doc.Close()
+        except Exception as e:
+            print(f"Error converting Word to PDF: {e}")
+            raise
+        finally:
+            word.Quit()
+        return output_path
+
+    # --------------------------------------------------------------------------
+    # HWP -> PDF
+    # --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def hwp_to_pdf(hwp_path: str, output_path: str = None) -> str:
+        if not os.path.exists(hwp_path):
+            raise FileNotFoundError(f"HWP 파일을 찾을 수 없습니다: {hwp_path}")
+
+        hwp_path = DocuConverter._sanitize_path(hwp_path)
+        output_path = output_path or str(Path(hwp_path).with_suffix('.pdf'))
+
+        hwp = win32.gencache.EnsureDispatch('HWPFrame.HwpObject')
+        hwp.RegisterModule('FilePathCheckDLL', 'SecurityModule')
+        hwp.Open(hwp_path)
+        try:
+            # HWP 버전 또는 환경에 따라 Format 지정
+            if hasattr(hwp.HParameterSet.HFileOpenSave, 'Format'):
+                hwp.HParameterSet.HFileOpenSave.Format = "PDF"
+            else:
+                hwp.HParameterSet.HFileOpenSave.Format = "PDF (16)"
+            hwp.HAction.Execute("FileSaveAs_S", hwp.HParameterSet.HFileOpenSave.HSet)
+        except Exception as e:
+            raise RuntimeError(f"HWP 변환 오류: {str(e)}") from e
+        finally:
+            hwp.Quit()
+        return output_path
+
+    # --------------------------------------------------------------------------
+    # Word -> JPG (Word->PDF->JPG)
+    # --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def word_to_jpg(word_path: str, output_dir: str = None, dpi: int = 300, poppler_path=None) -> list:
+        """Word -> PDF -> JPG 변환"""
+        pdf_path = DocuConverter.word_to_pdf(word_path)
+        return DocuConverter.pdf_to_jpg(pdf_path, output_dir, dpi, poppler_path)
+
+    # --------------------------------------------------------------------------
+    # HWP -> JPG (HWP->PDF->JPG)
+    # --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def hwp_to_jpg(hwp_path: str, output_dir: str = None, dpi: int = 300, poppler_path=None) -> list:
+        """HWP -> PDF -> JPG 변환"""
+        pdf_path = DocuConverter.hwp_to_pdf(hwp_path)
+        return DocuConverter.pdf_to_jpg(pdf_path, output_dir, dpi, poppler_path)
+
+# --------------------------------------------------------------------------
+# 배치 변환 함수 (여러 PDF를 동시에 JPG 변환)
+# --------------------------------------------------------------------------
+    @staticmethod
+    @conversion_wrapper
+    def batch_convert(pdf_list, max_workers=4):
+        converter = DocuConverter()
+        results = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(converter.pdf_to_jpg, pdf): pdf
+                for pdf in pdf_list
+            }
+            for future in as_completed(futures):
+                pdf_file = futures[future]
+                try:
+                    res = future.result()
+                    # res는 변환된 파일명 리스트
+                    results.extend(res)
+                except Exception as e:
+                    print(f"{futures[future]} 변환 실패: {e}")
+        return results
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/core/services/db_service.py
+===============================
+import json
+
+from PyQt5.QtCore import pyqtSignal
+
+from definition import ROOT_DIR
+from models.custom_yolo.infrastructure.storage.SQLite_connector import SQLiteConnector
+from models.custom_yolo.resources.sql.db_init_load import DB_INIT_QUERY
+
+
+class DBService:
+    DB_CONN_SIGNAL = pyqtSignal(str)
+    """
+    DBService: 각 테이블에 대한 기본적인 CRUD 메서드를 제공하는 서비스 클래스.
+
+    - init_schema(): 상기의 SCHEMA_SQL을 실행하여 테이블 전부 초기화.
+    - insert_XXX(), get_XXX(), update_XXX(), delete_XXX() 형태의 메서드를 필요에 따라 작성.
+    - 트랜잭션(ACID) 보장을 위해 with self._conn: 블록 내에서 DML을 수행.
+    """
+
+    def __init__(self, db_path: str = None):
+        self._connector = SQLiteConnector()  # 싱글턴 커넥터
+        self._conn = self._connector.connection  # 실제 커넥션 객체
+        # 필요한 경우, 다음과 같이 FK 활성화를 보장할 수도 있음
+        self._conn.execute("PRAGMA foreign_keys = ON;")
+        self.DB_CONN_SIGNAL.emit("DB 연결 완료")
+
+    # -------------------------------
+    # 1) 전체 스키마 초기화
+    # -------------------------------
+    def init_schema(self):
+        """
+        SCHEMA_SQL을 이용해 모든 테이블을 초기화(DROP 후 CREATE).
+        실제 운영 시에는 신중히 사용할 것.
+        """
+        with self._conn:
+            self._conn.executescript(DB_INIT_QUERY().get_init_query())
+
+    # ------------------------------------------------------------------------------
+    # 2) document_converter
+    # ------------------------------------------------------------------------------
+    def insert_document_converter(self, poppler_path: str, output_dir: str) -> int:
+        """
+        document_converter 테이블에 레코드 추가. ACID 트랜잭션 보장.
+        반환: 새 레코드의 id (PRIMARY KEY).
+        """
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO document_converter (poppler_path, output_dir)
+                VALUES (?, ?)
+            """, (poppler_path, output_dir))
+            return cur.lastrowid
+
+    def get_document_converter(self, id_val: int = None):
+        """
+        특정 id로 document_converter 조회.
+        반환: dict or None
+        """
+        # id_val 미지정 시 마지막 레코드 반환
+        if id_val is None:
+            id_val = self._conn.execute("SELECT MAX(id) FROM document_converter").fetchone()[0]
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT * FROM document_converter
+            WHERE id = ?
+        """, (id_val,))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def update_document_converter(self, id_val: int, poppler_path: str, output_dir: str):
+        with self._conn:
+            self._conn.execute("""
+                UPDATE document_converter
+                SET poppler_path = ?, output_dir = ?
+                WHERE id = ?
+            """, (poppler_path, output_dir, id_val))
+
+    def delete_document_converter(self, id_val: int):
+        with self._conn:
+            self._conn.execute("""
+                DELETE FROM document_converter
+                WHERE id = ?
+            """, (id_val,))
+
+    # ------------------------------------------------------------------------------
+    # 3) global_settings (key-value)
+    # ------------------------------------------------------------------------------
+    def insert_or_update_global_setting(self, key_: str, value_: str):
+        """
+        global_settings 테이블에 key/value를 upsert.
+        """
+        with self._conn:
+            self._conn.execute("""
+                INSERT INTO global_settings (key, value)
+                VALUES (?, ?)
+                ON CONFLICT(key) DO UPDATE SET value=excluded.value
+            """, (key_, value_))
+
+    def get_global_setting(self, key_: str) -> str:
+        cur = self._conn.cursor()
+        cur.execute("SELECT value FROM global_settings WHERE key = ?", (key_,))
+        row = cur.fetchone()
+        return row["value"] if row else None
+
+    def delete_global_setting(self, key_: str):
+        with self._conn:
+            self._conn.execute("""
+                DELETE FROM global_settings WHERE key = ?
+            """, (key_,))
+
+    # ------------------------------------------------------------------------------
+    # 4) class_info
+    # ------------------------------------------------------------------------------
+    def insert_class_info(self, class_idx: int, class_name: str):
+        with self._conn:
+            self._conn.execute("""
+                INSERT INTO class_info (class_idx, class_name)
+                VALUES (?, ?)
+            """, (class_idx, class_name))
+
+    def get_class_info(self, class_idx: int):
+        cur = self._conn.cursor()
+        cur.execute("""
+            SELECT class_idx, class_name FROM class_info
+            WHERE class_idx = ?
+        """, (class_idx,))
+        row = cur.fetchone()
+        if row:
+            return dict(row)
+        return None
+
+    def get_all_class_info(self):
+        cur = self._conn.cursor()
+        cur.execute("SELECT class_idx, class_name FROM class_info ORDER BY class_idx")
+        rows = cur.fetchall()
+        return [dict(r) for r in rows]
+
+    def update_class_info(self, class_idx: int, class_name: str):
+        with self._conn:
+            self._conn.execute("""
+                UPDATE class_info
+                SET class_name = ?
+                WHERE class_idx = ?
+            """, (class_name, class_idx))
+
+    def delete_class_info(self, class_idx: int):
+        with self._conn:
+            self._conn.execute("""
+                DELETE FROM class_info
+                WHERE class_idx = ?
+            """, (class_idx,))
+
+    # ------------------------------------------------------------------------------
+    # 5) data_config
+    # ------------------------------------------------------------------------------
+    def insert_data_config(self, base_path: str, train_path: str, val_path: str) -> int:
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO data_config (base_path, train_path, val_path)
+                VALUES (?, ?, ?)
+            """, (base_path, train_path, val_path))
+            return cur.lastrowid
+
+    def get_data_config(self, id_val: int):
+        cur = self._conn.cursor()
+        cur.execute("SELECT * FROM data_config WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # (update, delete 등 필요 시 추가)
+
+    # ------------------------------------------------------------------------------
+    # 6) results_config
+    # ------------------------------------------------------------------------------
+    def insert_results_config(self, base_path: str, train_path: str, val_path: str) -> int:
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO results_config (base_path, train_path, val_path)
+                VALUES (?, ?, ?)
+            """, (base_path, train_path, val_path))
+            return cur.lastrowid
+
+    def get_results_config(self, id_val: int):
+        cur = self._conn.cursor()
+        cur.execute("SELECT * FROM results_config WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # (update, delete 등 필요 시 추가)
+
+    # ------------------------------------------------------------------------------
+    # 7) model_paths
+    # ------------------------------------------------------------------------------
+    def insert_model_paths(self, detector_path: str, llm_model: str) -> int:
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO model_paths (detector_model_path, llm_model)
+                VALUES (?, ?)
+            """, (detector_path, llm_model))
+            return cur.lastrowid
+
+    def get_model_paths(self, id_val: int = None):
+        cur = self._conn.cursor()
+        if id_val is None:
+            return self._conn.execute("SELECT MAX(id) FROM model_paths").fetchone()[0]
+        cur.execute("SELECT * FROM model_paths WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------------------
+    # 8) labeling_config
+    # ------------------------------------------------------------------------------
+    def insert_labeling_config(self,
+                               device: str,
+                               label_save_mode: str,
+                               llm_max_retries: int,
+                               detect_imgsz: int,
+                               detect_conf: float,
+                               llm_max_new_tokens: int) -> int:
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO labeling_config (
+                    device, label_save_mode, llm_max_retries,
+                    detect_imgsz, detect_conf, llm_max_new_tokens
+                )
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (device, label_save_mode, llm_max_retries,
+                  detect_imgsz, detect_conf, llm_max_new_tokens))
+            return cur.lastrowid
+
+    def get_labeling_config(self, id_val: int = None):
+        if id_val is None:
+            return self._conn.execute("SELECT MAX(id) FROM labeling_config").fetchone()[0]
+        cur = self._conn.cursor()
+        cur.execute("SELECT * FROM labeling_config WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------------------
+    # 9) other_settings
+    # ------------------------------------------------------------------------------
+    def insert_other_settings(self, use_gpu: int, log_level: str) -> int:
+        """
+        use_gpu: 1 or 0
+        """
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO other_settings (use_gpu, log_level)
+                VALUES (?, ?)
+            """, (use_gpu, log_level))
+            return cur.lastrowid
+
+    def get_other_settings(self, id_val: int):
+        cur = self._conn.cursor()
+        cur.execute("SELECT * FROM other_settings WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ------------------------------------------------------------------------------
+    # 10) training_config
+    # ------------------------------------------------------------------------------
+    def insert_training_config(self,
+                               epochs: int,
+                               batch_size: int,
+                               device: str,
+                               imgsz: int,
+                               YOLO_model: str,
+                               custom_model_path: str,
+                               data_yaml: str,
+                               data_config_id: int,
+                               results_config_id: int,
+                               model_paths_id: int) -> int:
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO training_config (
+                    epochs, batch_size, device, imgsz,
+                    YOLO_model, custom_model_path, data_yaml,
+                    data_config_id, results_config_id, model_paths_id
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (epochs, batch_size, device, imgsz,
+                  YOLO_model, custom_model_path, data_yaml,
+                  data_config_id, results_config_id, model_paths_id))
+            return cur.lastrowid
+
+    def get_training_config(self, id_val: int = None):
+        cur = self._conn.cursor()
+        if id_val is None:
+            return self._conn.execute("SELECT MAX(id) FROM training_config").fetchone()[0]
+        cur.execute("SELECT * FROM training_config WHERE id = ?", (id_val,))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # (update, delete 등 필요 시 추가)
+    def update_model_path(self, target_id: int, path: str):
+        cur = self._conn.cursor()
+        cur.execute("UPDATE custom_model_path SET path = ? WHERE id = ?", (path, target_id))
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    def insert_model_path(self, path):
+        with self._conn:
+            cur = self._conn.execute("""
+                INSERT INTO custom_model_path (path)
+                VALUES (?)
+            """, (path,))
+            return cur.lastrowid
+
+    def update_training_config(self, id_val, path):
+        with self._conn:
+            cur = self._conn.execute(f"""
+                UPDATE training_config
+                SET data_yaml = ?
+                WHERE id = ?
+            """, (path, id_val))
+        return cur.lastrowid
+
+    # ------------------------------------------------------------------------------
+    # 추가적으로, 필요한 쿼리는 아래처럼 자유롭게 구현 가능
+    # ------------------------------------------------------------------------------
+    def close(self):
+        """ 명시적 DB 연결 해제 (옵션) """
+        self._connector.close()
+
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/core/use_cases/custom_data.yaml
+===============================
+# data.yaml
+
+# (선택) base 경로
+path: C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/test-2
+# 필수: 학습/검증 이미지와 라벨 경로
+train: train/images
+val: valid/images
+
+
+# (필수) 클래스 이름(또는 `nc: 6` 식으로 클래스 개수만 명시)
+names:
+  0: question
+  1: answer
+  2: figure
+  3: etc
+  4: q_num
+  5: q_type
+
+# (선택) 클래스 개수. YOLOv8은 names 또는 nc가 반드시 있어야 함
+nc: 6
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/label_model/auto_labeler.py
+===============================
+import json
+
+import cv2
+import torch
+from PyQt5.QtCore import pyqtSignal
+from ultralytics import YOLO
+from transformers import (
+    AutoModelForCausalLM,
+    AutoTokenizer,
+    BitsAndBytesConfig)
+
+from models.custom_yolo.core.services.db_service import DBService
+
+"""
+    for loop 내부에 라벨 생성 코드의 들여쓰기를 수정하여 각 객체에 대해 LLM 모델을 적용
+    라벨 결과 저장 시, 매개변수 순서를 labels, output_path로 일치시킴
+    라벨 출력 시, 딕셔너리 키 이름을 "coordinates"로 통일
+"""
+
+
+class AutoLabeler:
+    log_signal = pyqtSignal(str)
+
+    def __init__(self):
+        """
+        DB에서 labeling_config, model_paths, class_info 정보를 읽어 LLM 및 Detector 초기화
+        """
+        db_service = DBService()
+
+        # Extract device from config
+        labeling_cfg = db_service.get_labeling_config()
+        if labeling_cfg:
+            device_str = labeling_cfg.get("device", "cpu")
+            self.label_save_mode = labeling_cfg.get("label_save_mode", "auto")
+            self.llm_max_retries = labeling_cfg.get("llm_max_retries", 5)
+            self.detect_imgsz = labeling_cfg.get("detect_imgsz", 640)
+            self.detect_conf = labeling_cfg.get("detect_conf", 0.5)
+            self.llm_max_new_tokens = labeling_cfg.get("llm_max_new_tokens", 10000)
+        else:
+            device_str = "cpu"
+            self.label_save_mode = "auto"
+            self.llm_max_retries = 5
+            self.detect_imgsz = 640
+            self.detect_conf = 0.5
+            self.llm_max_new_tokens = 10000
+
+        # GPU 사용 가능 여부 체크
+        if device_str == 'cuda' and not torch.cuda.is_available():
+            if self.log_signal:
+                self.log_signal.emit("CUDA 사용 불가능, CPU로 전환")
+            device_str = 'cpu'
+        self.device = device_str
+
+        # 2) model_paths(id=1) 예시
+        model_paths = db_service.get_model_paths()
+        if model_paths:
+            self.detector_model_path = model_paths.get("detector_model_path", "yolov8n.pt")
+            self.llm_model_name = model_paths.get("llm_model", "microsoft/phi-2")
+        else:
+            self.detector_model_path = "yolov8n.pt"
+            self.llm_model_name = "microsoft/phi-2"
+
+        # 3) LLM 초기화
+        self.quant_config = BitsAndBytesConfig(
+            load_in_4bit=True,
+            bnb_4bit_compute_dtype=torch.float16,
+            bnb_4bit_quant_type="nf4"
+        )
+
+        self. llm_model = AutoModelForCausalLM.from_pretrained(
+            self.llm_model_name,
+            device_map="auto",
+            quantization_config=self.quant_config,
+            trust_remote_code=True
+        )
+
+        self.tokenizer = AutoTokenizer.from_pretrained(
+            self.llm_model_name,
+            padding_side="left"
+        )
+
+        self.detector = None  # 지연 초기화
+        class_list = db_service.get_all_class_info()  # 예: [{"class_idx":0,"class_name":"question"},...]
+        # 뒤집어서 {"question":0, "answer":1, ...}
+        self.class_map = {}
+        for row in class_list:
+            self.class_map[row["class_name"]] = row["class_idx"]
+
+    def initialize_detector(self, model_path=None):
+        if model_path is None:
+            model_path = self.detector_model_path
+        self.detector = YOLO(model_path)
+
+    def detect_objects(self, image_path):
+        """
+        이미지에서 객체를 감지하고, 감지된 객체의 좌표를 반환합니다.
+        :param image_path: 이미지 파일 경로
+        :return: 감지된 객체의 좌표 리스트
+        """
+        # 이미지에서 객체 감지
+        if not self.detector:
+            self.initialize_detector()
+        results = self.detector.predict(
+            image_path,
+            imgsz=self.detect_imgsz,
+            conf=self.detect_conf,
+            device=self.device,
+            workers=0  # 멀티프로세싱 비활성화
+        )
+        # 첫 번째 이미지의 결과 // 여러 이미지일 경우 리스트로 반환
+        boxes = results[0].boxes.xywhn.cpu().numpy()  # x, y, w, h, class
+        if len(boxes) == 0:
+            print("no objects detected")
+        return boxes
+
+    def generate_label_for_box(self, img, box):
+        x_center, y_center, width, height = box
+        x1 = int((x_center - width / 2) * img.shape[1])
+        y1 = int((y_center - height / 2) * img.shape[0])
+        x2 = int((x_center + width / 2) * img.shape[1])
+        y2 = int((y_center + height / 2) * img.shape[0])
+        crop_img = img[y1:y2, x1:x2]
+
+        try:
+            prompt = self._create_prompt(crop_img)
+            response = self._query_llm(prompt)
+            label = self._parse_response(response)
+            return {
+                'coordinates': box.tolist(),
+                'label': label,
+                'class_id': self.class_map.get(label, self.class_map.get("etc", 3))
+            }
+        except Exception as e:
+            print(f"Error generating label for box {box}: {e}")
+            return {
+                'coordinates': box.tolist(),
+                'label': 'etc',
+                'class_id': self.class_map.get("etc", 3)
+            }
+
+    def generate_labels(self, image_path, boxes):
+        img = cv2.imread(image_path)
+        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        labels = []
+        if len(boxes) == 0:
+            return labels
+        for box in boxes:
+            result = self.generate_label_for_box(img, box)
+            labels.append(result)
+        return labels
+
+    def _create_prompt(self, image):
+        """
+        Convert cropped image to a short hex string for the LLM prompt.
+        """
+        _, buffer = cv2.imencode('.jpg', image)
+        hex_snippet = buffer.tobytes().hex()[:200]
+        prompt = f"""
+        [이미지 데이터 헥사: {hex_snippet}]
+        다음 이미지 영역을 분석하고 적절한 라벨을 선택하세요:
+        - question: 문제 내용 영역
+        - answer: 정답 영역
+        - figure: 그래프/삽화
+        - q_num: 문제 번호
+        - q_type: 문제 유형
+        - etc: 기타 영역
+
+        반드시 JSON 형식으로 응답: {{"label": "선택한_라벨"}}
+        """
+        return prompt
+
+    def _query_llm(self, prompt):
+        max_retries = self.llm_max_retries
+        for _ in range(max_retries):
+            retries_count = 0
+            try:
+                model_device = next(self.llm_model.parameters()).device
+                inputs = self.tokenizer(prompt, return_tensors="pt").to(model_device)
+                with torch.inference_mode():
+                    outputs = self.llm_model.generate(
+                        **inputs,
+                        do_sample=False,
+                        max_new_tokens=self.llm_max_new_tokens,
+                        pad_token_id=self.tokenizer.eos_token_id
+                    )
+                return self.tokenizer.decode(outputs[0], skip_special_tokens=True)
+            except RuntimeError as e:
+                if "CUDA out of memory" in str(e):
+                    self.log_signal.emit(f"Error querying LLM: {e}.. retrying.. current retries count : {retries_count}")
+                    retries_count += 1
+                    torch.cuda.empty_cache()
+                    continue
+                raise
+        return ""  # 실패 시 빈 문자열 반환
+
+    def _parse_response(self, response):
+        """
+        Look for a JSON snippet { "label": "some_label" }
+        """
+        if not response:
+            return 'etc'
+        try:
+            # response 에 json 형식 체크
+            if '{' not in response or '}' not in response:
+                return 'etc'
+            # json 형식으로 변환 후 label 값 추출
+            json_part = response.split('{', 1)[1].split('}', 1)[0] + '}'
+            data = json.loads("{" + json_part.strip("{}") + "}")
+            return data.get('label', 'etc')
+        except Exception as e:
+            print(f"Error parsing response: {e}")
+            return 'etc'
+
+    def save_label(self, labels, output_path):
+        with open(output_path, 'w', encoding='utf-8') as f:
+            for label in labels:
+                coords_str = ' '.join(map(str, label['coordinates']))
+                f.write(f"{label['class_id']} {coords_str}\n")
+
+
+
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/label_model/gui_main.py
+===============================
+from PyQt5.QtWidgets import (
+    QMainWindow, QTabWidget
+)
+
+from models.custom_yolo.infrastructure.computer_vision.label_model.auto_labeler import AutoLabeler
+from models.custom_yolo.infrastructure.computer_vision.label_model.program_gui.document import DocumentConverterTab
+from models.custom_yolo.infrastructure.computer_vision.label_model.program_gui.label import LabelingTab
+from models.custom_yolo.infrastructure.computer_vision.label_model.program_gui.setting import SettingsTab
+from models.custom_yolo.infrastructure.computer_vision.learning_model.training_model import TrainingModel
+from models.custom_yolo.common.memory_monitor import (ResourceGraphWidget)
+from models.custom_yolo.infrastructure.storage.SettingsManager import Settings
+import torch
+import win32com.client
+
+
+class MainWindow(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.settings = Settings().all_settings
+        self.init_ui()
+
+    def init_ui(self):
+        self.setWindowTitle("시험지 자동 라벨링 및 학습 시스템")
+        self.resize(1200, 800)
+        tabs = QTabWidget()
+        self.setCentralWidget(tabs)
+
+        # 1) Construct an AutoLabeler with the current settings
+        auto_labeler = AutoLabeler()
+        auto_labeler.initialize_detector(self.settings.get("detector_model_path", None))
+
+        # 2) Add Labeling Tab
+        labeling_tab = LabelingTab(auto_labeler)
+        tabs.addTab(labeling_tab, "Labeling")
+
+        # 4) Resource Monitor Tab
+        resource_tab = ResourceGraphWidget(interval=1000)
+        tabs.addTab(resource_tab, "Resource Monitor")
+
+        # Inside MainWindow's init_ui method:
+        training_tab = TrainingModel()
+        settings_tab = SettingsTab()
+
+        # settings_saved 신호 연결
+        settings_tab.settings_updated.connect(training_tab.load_settings_into_ui)
+        # resource_updated 신호 연결
+        settings_tab.resource_updated.connect(training_tab.update_resources)
+
+        tabs.addTab(training_tab, "Training")
+        tabs.addTab(settings_tab, "Settings")
+
+        docu_converter_tab = DocumentConverterTab()
+        tabs.addTab(docu_converter_tab, "Document")
+
+    def closeEvent(self, event):
+        # 모든 탭(또는 워커가 있는 객체) 순회하여 작업 스레드 종료
+        for i in range(self.centralWidget().count()):
+            tab = self.centralWidget().widget(i)
+            if hasattr(tab, 'worker') and tab.worker and tab.worker.isRunning():
+                tab.worker.terminate()
+                tab.worker.wait(1000)  # 1초 그레이스 기간
+        # GPU 자원 해제
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        # COM 객체 정리
+        try:
+            win32com.client.Dispatch('Word.Application').Quit()
+        except Exception:
+            pass
+        event.accept()
+
+
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/label_model/program_gui/document.py
+===============================
+import os
+
+from PyQt5.QtCore import QUrl, QThreadPool, pyqtSignal, QObject, QRunnable, pyqtSlot
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QPlainTextEdit, QFileDialog, QMessageBox, \
+    QHBoxLayout
+
+from models.custom_yolo.core.services.convert_document import DocuConverter
+from models.custom_yolo.core.services.db_service import DBService
+from models.custom_yolo.infrastructure.computer_vision.multi_worker.thread_worker import DocumentConversionRunnable
+
+
+# Worker Signals 정의
+class DocumentConversionSignals(QObject):
+    finished = pyqtSignal(list)   # 변환된 JPG 파일 경로 리스트
+    error = pyqtSignal(Exception)
+    log = pyqtSignal(str)
+
+
+class DocumentConverterTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.doc_path = []   # 사용자가 선택한 문서 파일(들)
+        self.output_dir = None  # UI에서 선택한 출력 폴더
+        self.pdf_list = []
+        self.thread_pool = QThreadPool.globalInstance()
+
+        # UI 초기화
+        self.init_ui()
+        # DB에서 document_converter 설정 로드
+        self.load_document_converter_settings()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 상단: 파일 선택 영역
+        file_select_layout = QHBoxLayout()
+        btn_select = QPushButton("문서 파일 선택")
+        btn_select.clicked.connect(self.select_document)
+        file_select_layout.addWidget(btn_select)
+
+        self.file_label = QLabel("선택된 파일 없음")
+        file_select_layout.addWidget(self.file_label)
+        layout.addLayout(file_select_layout)
+
+        # 출력 폴더 선택 영역
+        output_layout = QHBoxLayout()
+        btn_select_output = QPushButton("출력 폴더 선택")
+        btn_select_output.clicked.connect(self.select_output_dir)
+        output_layout.addWidget(btn_select_output)
+
+        self.output_path_edit = QPlainTextEdit()
+        self.output_path_edit.setPlaceholderText("출력 폴더 경로 (미지정 시 입력 파일 폴더)")
+        self.output_path_edit.setFixedHeight(30)
+        output_layout.addWidget(self.output_path_edit)
+        layout.addLayout(output_layout)
+
+        # Poppler 경로 설정 영역
+        poppler_layout = QHBoxLayout()
+        btn_select_poppler = QPushButton("Poppler 경로 선택")
+        btn_select_poppler.clicked.connect(self.select_poppler_path)
+        poppler_layout.addWidget(btn_select_poppler)
+
+        self.poppler_path_edit = QPlainTextEdit()
+        self.poppler_path_edit.setPlaceholderText("Poppler 경로 (save/load)")
+        self.poppler_path_edit.setFixedHeight(30)
+        poppler_layout.addWidget(self.poppler_path_edit)
+        layout.addLayout(poppler_layout)
+
+        # 변환 실행 버튼
+        btn_convert = QPushButton("JPG로 변환")
+        btn_convert.clicked.connect(self.start_conversion)
+        layout.addWidget(btn_convert)
+
+        # 로그/메시지 출력 영역
+        self.log_edit = QPlainTextEdit()
+        self.log_edit.setReadOnly(True)
+        layout.addWidget(self.log_edit)
+
+        # 하단: 현재 document_converter 설정 표시 영역
+        self.current_settings_label = QLabel("현재 document_converter 설정:")
+        layout.addWidget(self.current_settings_label)
+
+        self.setLayout(layout)
+
+    def select_document(self):
+        """
+        여러 문서파일을 선택할 수 있도록 QFileDialog.getOpenFileNames 사용
+        """
+        file_paths, _ = QFileDialog.getOpenFileNames(
+            self,
+            "문서 파일 선택",
+            "",
+            "문서 파일 (*.doc *.docx *.hwp *.pdf)"
+        )
+        if file_paths:
+            self.pdf_list = file_paths
+            self.doc_path = file_paths
+            self.file_label.setText(f"선택된 파일: {file_paths}")
+            self.log("파일 선택됨: " + ', '.join(file_paths))
+        else:
+            self.log("사용자 요청에 의해 파일 선택이 취소 되었습니다.")
+
+    def convert_multiple_pdfs(self):
+        if not self.pdf_list:
+            QMessageBox.warning(self, "경고", "먼저 문서 파일을 선택하세요.")
+            return
+
+        # 병렬 변환 실행
+        results = DocuConverter().batch_convert(self.pdf_list, max_workers=4)
+        if results:
+            self.log(f"변환 완료: {len(results)}개의 JPG 파일 생성됨.")
+        else:
+            self.log("변환 실패 또는 생성된 JPG 파일 없음.")
+
+    def select_output_dir(self):
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "출력 폴더 선택",
+            ""
+        )
+        if dir_path:
+            self.output_dir = dir_path
+            self.output_path_edit.setPlainText(dir_path)
+            self.log("출력 폴더 선택됨: " + dir_path)
+        else:
+            self.log("출력 폴더 선택 취소")
+
+    def select_poppler_path(self):
+        # Poppler의 실행 파일이 있는 폴더를 선택
+        dir_path = QFileDialog.getExistingDirectory(
+            self,
+            "Poppler 경로 선택",
+            ""
+        )
+        if dir_path:
+            self.poppler_path_edit.setPlainText(dir_path)
+            self.log("Poppler 경로 선택됨: " + dir_path)
+        else:
+            self.log("Poppler 경로 선택 취소")
+
+    def start_conversion(self):
+        if not self.doc_path:
+            QMessageBox.warning(self, "경고", "먼저 문서 파일을 선택하세요.")
+            return
+
+        # 출력 폴더: 사용자가 지정하지 않으면 입력 파일과 같은 폴더
+        output_dir = self.output_path_edit.toPlainText().strip()
+        default_dir = None
+        if not output_dir:
+            if len(self.doc_path) == 1:
+                default_dir = os.path.dirname(self.doc_path[0])
+            else:
+                default_dir = os.getcwd()
+
+        # DB에서 저장된 값이 있는지 조회
+        db_service = DBService()
+        row = db_service.get_document_converter()  # 예: id=1
+        if row:
+            fallback_dir = row.get("output_dir", default_dir)
+            output_dir = fallback_dir
+        else:
+            output_dir = default_dir
+        self.output_dir = output_dir
+        self.output_path_edit.setPlainText(output_dir)
+
+        # Poppler 경로: poppler_path_edit의 값이 있으면 사용, 없으면 settings에서 가져오거나 기본값
+        poppler_path = self.poppler_path_edit.toPlainText().strip()
+        if not poppler_path:
+            poppler_path = row.get("poppler_path", r"C:/Program Files/poppler-21.03.0/Library/bin")
+
+        self.poppler_path_edit.setPlainText(poppler_path)
+        
+        # DocumentConversionRunnable parameter 전달
+        worker = DocumentConversionRunnable(
+            doc_path=self.doc_path,
+            dpi=row.get("dpi", 300),
+            output_dir=output_dir,
+            poppler_path=poppler_path
+        )
+        worker.signals.log.connect(self.log)
+        worker.signals.finished.connect(self.conversion_finished)
+        worker.signals.error.connect(self.conversion_error)
+        self.thread_pool.start(worker)
+
+    def conversion_finished(self, jpg_files):
+        # 변환 완료 후 결과 폴더 열기
+        db_service = DBService()
+        row = db_service.get_document_converter()
+        if row.get('open_after_finish') == 1:
+            if self.doc_path and len(self.doc_path) == 1:
+                output_dir = os.path.dirname(self.doc_path[0])
+                QDesktopServices.openUrl(QUrl.fromLocalFile(output_dir))
+            else:
+                if self.output_dir:
+                    QDesktopServices.openUrl(QUrl.fromLocalFile(self.output_dir))
+        self.log(f"변환 완료: {len(jpg_files)}개의 JPG 파일 생성됨.")
+
+    def conversion_error(self, e):
+        self.log("변환 중 오류 발생: " + str(e))
+        QMessageBox.critical(self, "오류", f"문서 변환 중 오류 발생:\n{e}")
+
+    def log(self, message):
+        self.log_edit.appendPlainText(message)
+        self.update_current_settings_display()
+
+    def load_document_converter_settings(self):
+        # settings.json에서 document_converter 항목 읽기
+        db_service = DBService()
+        row = db_service.get_document_converter()
+        if row:
+            poppler_path = row.get("poppler_path", "")
+            output_dir = row.get("output_dir", "")
+        else:
+            poppler_path = "C:/Program Files/poppler-21.03.0/Library/bin"
+            output_dir = None
+
+        self.poppler_path_edit.setPlainText(poppler_path)
+        self.output_path_edit.setPlainText(output_dir)
+        self.update_current_settings_display()
+
+    def update_current_settings_display(self):
+        """
+        하단에 '현재 document_converter 설정' 레이블 업데이트
+        """
+        current_poppler = self.poppler_path_edit.toPlainText().strip()
+        current_output = self.output_path_edit.toPlainText().strip()
+        # 혹은 self.output_dir 값도 고려
+        if not current_output and self.output_dir:
+            current_output = self.output_dir
+        display_text = (
+            f"현재 Poppler 경로: {current_poppler}\n"
+            f"현재 출력(저장) 경로: {current_output if current_output else '미지정'}"
+        )
+        self.current_settings_label.setText(display_text)
+
+    def save_document_converter_settings(self):
+        # UI로부터 poppler_path 얻기
+        new_poppler = self.poppler_path_edit.toPlainText().strip()
+        new_output = self.output_path_edit.toPlainText().strip()
+
+        db_service = DBService()
+        last_id = 0
+        row = db_service.get_document_converter()
+        if row:
+            # 이미 있으면 update
+            db_service.update_document_converter(
+                id_val=row["id"],
+                poppler_path=new_poppler,
+                output_dir=new_output
+            )
+            self.log("document_converter 설정이 업데이트되었습니다.")
+        else:
+            # 없으면 insert
+            new_id = db_service.insert_document_converter(
+                poppler_path=new_poppler,
+                output_dir=new_output
+            )
+            self.log(f"새로운 document_converter 설정이 추가되었습니다. (id={new_id})")
+
+        self.update_current_settings_display()
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/label_model/program_gui/label.py
+===============================
+from functools import partial
+
+import cv2
+from PyQt5.QtCore import QThread, pyqtSignal, QThreadPool, Qt
+from PyQt5.QtGui import QImage, QPixmap
+from PyQt5.QtWidgets import QWidget, QPlainTextEdit, QVBoxLayout, QPushButton, QLabel, QScrollArea, QFileDialog, \
+    QProgressDialog, QMessageBox
+
+from models.custom_yolo.infrastructure.computer_vision.label_model.auto_labeler import AutoLabeler
+
+
+class LabelingWorker(QThread):
+    error = pyqtSignal(Exception)
+    finished = pyqtSignal(list)
+    progress = pyqtSignal(int)
+
+    def __init__(self, auto_labeler, image_path):
+        super().__init__()
+        self.auto_labeler = auto_labeler
+        self.image_path = image_path
+
+    def run(self):
+        try:
+            boxes = self.auto_labeler.detect_objects(self.image_path)
+            labels = []
+            # 이미지는 한 번만 읽어오기
+            img = cv2.imread(self.image_path)
+            for idx, box in enumerate(boxes):
+                labels.append(self.auto_labeler.generate_label_for_box(img, box))
+                self.progress.emit(int((idx + 1) / len(boxes) * 100))
+            self.finished.emit(labels)
+        except Exception as e:
+            self.error.emit(e)
+
+
+class LabelingTab(QWidget):
+    def __init__(self, auto_labeler: AutoLabeler):
+        super().__init__()
+        self.auto_labeler: AutoLabeler = auto_labeler
+        self.image_paths = []
+        self.image_path = None
+        self.labels = None
+
+        self.progress_dialog = None
+        self.log_edit = QPlainTextEdit()
+        self.image_label = None
+
+        self.init_ui()
+        self.thread_pool = QThreadPool.globalInstance()
+        self.thread_pool.setMaxThreadCount(2)  # 동시 실행 최대 2개로 제한
+
+    def init_ui(self):
+        try:
+            layout = QVBoxLayout()
+
+            # 이미지 선택 버튼
+            btn_select = QPushButton("이미지 파일 선택")
+            btn_select.clicked.connect(self.select_image)
+            layout.addWidget(btn_select)
+
+            # 자동 라벨링 실행 버튼
+            btn_run = QPushButton("자동 라벨링 실행")
+            btn_run.clicked.connect(self.run_labeling)
+            layout.addWidget(btn_run)
+
+            # 라벨링 결과 미리보기
+            self.image_label.setAlignment(Qt.AlignCenter)
+            self.image_label.setScaledContents(True)
+            scroll = QScrollArea()
+            scroll.setWidgetResizable(True)
+            scroll.setWidget(self.image_label)
+            layout.addWidget(scroll)
+
+            # log 출력
+            self.log_edit.setReadOnly(True)
+            layout.addWidget(self.log_edit)
+
+            # 결과 저장 버튼
+            btn_save = QPushButton("라벨 결과 저장")
+            btn_save.clicked.connect(self.save_labels)
+            layout.addWidget(btn_save)
+
+            self.setLayout(layout)
+
+        except Exception as e:
+            print("ERROR", e)
+
+    def log(self, message):
+        self.log_edit.appendPlainText(message)
+
+    def select_image(self):
+        file_paths, _ = QFileDialog.getOpenFileNames(self, "이미지 파일 선택", "", "이미지 파일 (*.jpg *.png)")
+        if file_paths:
+            self.image_paths = file_paths
+            self.log(f"선택한 이미지 파일 개수 : {len(file_paths)} 개")
+        else:
+            self.log("이미지 파일 선택 취소")
+
+    def run_labeling(self):
+        if not self.image_paths:
+            self.log("먼저 이미지 파일을 선택해주세요.")
+            return
+        self.progress_dialog = QProgressDialog("라벨링 진행 중...", "취소", 0, len(self.image_paths), self)
+
+        for idx, image_path in enumerate(self.image_paths):
+            worker = LabelingWorker(self.auto_labeler, image_path)
+            worker.finished.connect(partial(self.handle_single_result, idx))
+            worker.progress.connect(self.update_progress)
+            self.thread_pool.start(worker)
+
+    def handle_single_result(self, idx, labels):
+        self.progress_dialog.setValue(idx + 1)
+        self.log(f"[{idx}] 번 이미지 라벨링 {labels} 완료")
+
+    def update_progress(self, progress):
+        self.log(f"진행률: {progress}%")
+
+    def labeling_finished(self, labels):
+        self.labels = labels
+        # origin image 로드
+        img = cv2.imread(self.image_path)
+        if img is None:
+            self.log(f"원본 이미지를 찾을 수 없습니다 : {self.image_path}")
+            return
+
+        # 예: AutoLabeler.detect_objects()로 얻은 boxes 배열과, labels 배열이 있다고 가정합니다.
+        # 만약 self.labels가 각 객체에 대한 dict 형태라면, 여기서 'coordinates'와 'label' 키를 사용합니다.
+        # 아래 예제에서는 normalized 좌표를 사용한다고 가정합니다.
+        for label_info in self.labels:
+            # label_info 예: {'coordinates': [x_center, y_center, w, h], 'label': "question", ...}
+            box = label_info['coordinates']  # normalized 좌표
+            label_text = label_info['label']
+
+            # 이미지의 크기에 맞게 좌표 변환
+            h_img, w_img = img.shape[:2]
+            x_center, y_center, w_box, h_box = box
+            x_center *= w_img
+            y_center *= h_img
+            w_box *= w_img
+            h_box *= h_img
+            x1 = int(x_center - w_box / 2)
+            y1 = int(y_center - h_box / 2)
+            x2 = int(x_center + w_box / 2)
+            y2 = int(y_center + h_box / 2)
+            # 사각형 그리기
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 0, 0), 2)
+            # 라벨 텍스트 표시
+            cv2.putText(img, label_text, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+
+        # BGR 이미지를 RGB로 변환 후 QImage에 표시
+        img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+        height, width, channel = img_rgb.shape
+        bytes_per_line = 3 * width
+        qt_image = QImage(img_rgb.data, width, height, bytes_per_line, QImage.Format_RGB888)
+        self.image_label.setPixmap(
+            QPixmap.fromImage(qt_image).scaled(
+                self.image_label.width(),
+                self.image_label.height(),
+                Qt.KeepAspectRatio
+            )
+        )
+
+    def save_labels(self):
+        """
+        라벨을 TXT로 저장.
+        DB에서 label_save_mode(= auto/manual) 여부를 가져올 수도 있지만,
+        여기서는 AutoLabeler 내부의 label_save_mode를 활용해도 됨.
+        """
+        if not self.image_paths:
+            self.log("라벨링할 이미지가 없습니다.")
+            return
+
+        label_save_mode = self.auto_labeler.label_save_mode
+
+        single_image: bool = True
+        # 이미지 for 문으로 돌면서 라벨링
+        if len(self.image_paths) == 1:
+            self.image_path = self.image_paths[0]
+            if not self.labels:
+                self.log("라벨링 먼저 실행해주세요.")
+                return
+        else:
+            single_image = False
+            for idx, image_path in enumerate(self.image_paths):
+                self.image_path = image_path
+                self.log(f"[{idx}] 번 이미지 라벨링 중...")
+                self.labels = self.auto_labeler.generate_labels(image_path, self.auto_labeler.detect_objects(image_path))
+                self.labeling_finished(self.labels)
+
+        if label_save_mode == "auto":
+            # 이미지 파일 확장자를 .txt 으로 변경하여 자동 저장하기
+            file_name = self.image_path.rsplit('.', 1)[0] + '.txt'
+        else:
+            # 수동 모드 : 사용자가 직접 위치 설정하기
+            file_name, _ = QFileDialog.getSaveFileName(
+                self, "label 저장", "", "텍스트 파일 (*.txt)")
+
+        self.auto_labeler.save_label(self.labels, file_name)
+        QMessageBox.information(self, "저장 완료", f"라벨 파일: {file_name}")
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/label_model/program_gui/setting.py
+===============================
+import json
+import os
+
+from PyQt5.QtCore import pyqtSignal, QTimer, QThreadPool, pyqtSlot
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QGroupBox, QFormLayout, QLineEdit, QPushButton, QSpinBox, QComboBox, \
+    QHBoxLayout, QRadioButton, QLabel, QPlainTextEdit, QFileDialog, QMessageBox
+
+from models.custom_yolo.common.settings.settings_manager import SettingsManager
+from models.custom_yolo.core.services.db_service import DBService
+from models.custom_yolo.infrastructure.computer_vision.multi_worker.thread_worker import SaveSettingsWorker, \
+    LoadSettingsWorker, _executor
+
+
+class SettingsTab(QWidget):
+    def __init__(self):
+        super().__init__()
+        self.db_service = DBService()
+        self.settings_manger = SettingsManager()
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # Training Model Configuration
+        grp_train_box = QGroupBox("Training Configuration")
+        train_box_layout = QFormLayout()
+        ####################################################################################
+        # 모델 설정 그룹
+        grp_model = QGroupBox("Base Model Configuration")
+        model_layout = QFormLayout()
+        # detector path
+        self.detector_path_edit = QLineEdit(self.settings.get("detector_model_path", ""))
+        btn_browse_detector = QPushButton("Browse")
+        btn_browse_detector.clicked.connect(lambda: self.browse_file(self.detector_path_edit))
+        row_widget1 = self._path_row(self.detector_path_edit, btn_browse_detector)
+        model_layout.addRow("YOLO Model :", row_widget1)
+        # LLM model
+        self.llm_model_edit = QLineEdit(self.settings.get("llm_model", "microsoft/phi-2"))
+        model_layout.addRow("LLM Model:", self.llm_model_edit)
+        grp_model.setLayout(model_layout)
+        layout.addWidget(grp_model)
+        ####################################################################################
+        # 데이터 설정 그룹
+        grp_data = QGroupBox("Learning Data")
+        data_layout = QFormLayout()
+
+        # 기존 settings에서 값 가져오기
+        data_settings = self.settings.get("data", {})
+        data_path = data_settings.get("path", "")
+        train_path = data_settings.get("train", "")
+        val_path = data_settings.get("val", "")
+
+        # train_path와 val_path에서 data_path 부분 제거
+        def get_relative_path(full_path, base_path):
+            if base_path and full_path.startswith(base_path):
+                rel = full_path[len(base_path):]
+                # 만약 경로 구분자가 맨 앞에 있다면 제거
+                return rel.lstrip(os.sep)
+            return full_path
+
+        relative_train = get_relative_path(train_path, data_path)
+        relative_val = get_relative_path(val_path, data_path)
+
+        # UI 위젯 생성 시 적용
+        self.path_edit = QLineEdit(data_path)
+        self.train_path_edit = QLineEdit(relative_train)
+        self.val_path_edit = QLineEdit(relative_val)
+
+        btn_browse_train = QPushButton("Browse")
+        btn_browse_train.clicked.connect(lambda: self.browse_dir(self.train_path_edit))
+        btn_browse_val = QPushButton("Browse")
+        btn_browse_val.clicked.connect(lambda: self.browse_dir(self.val_path_edit))
+        btn_browse_data = QPushButton("Browse")
+        btn_browse_data.clicked.connect(lambda: self.browse_dir(self.path_edit))
+
+        data_layout.addRow("Data Path:", self._path_row(self.path_edit, btn_browse_data))
+        data_layout.addRow("Train Data:", self._path_row(self.train_path_edit, btn_browse_train))
+        data_layout.addRow("Val Data:", self._path_row(self.val_path_edit, btn_browse_val))
+
+        grp_data.setLayout(data_layout)
+        ####################################################################################
+        grp_params = QGroupBox("Parameters")
+        training_layout = QFormLayout()
+
+        training_config = self.settings.get("training", {})
+        epochs_value = training_config.get("epochs", 50)
+        batch_value = training_config.get("batch_size", 16)
+        imgsz_value = training_config.get("imgsz", 640)
+
+        self.spin_epochs = QSpinBox()
+        self.spin_epochs.setRange(1, 1000)
+        self.spin_epochs.setValue(epochs_value)
+
+        self.spin_batch = QSpinBox()
+        self.spin_batch.setRange(1, 128)
+        self.spin_batch.setValue(batch_value)
+
+        self.combo_imgsz = QComboBox()
+        # just as an example
+        self.combo_imgsz.addItems(["320", "640", "1280"])
+        # attempt to set the current to whatever is in config
+        index_imgsz = self.combo_imgsz.findText(str(imgsz_value))
+        if index_imgsz >= 0:
+            self.combo_imgsz.setCurrentIndex(index_imgsz)
+
+        training_layout.addRow("Epochs:", self.spin_epochs)
+        training_layout.addRow("Batch Size:", self.spin_batch)
+        training_layout.addRow("Img Size:", self.combo_imgsz)
+
+        # Device radio
+        grp_device = QGroupBox("Device")
+        device_str = training_config.get("device", "cpu")
+        device_layout = QHBoxLayout()
+        self.device_choices = {
+            "CUDA (Nvidia)": "cuda",
+            "CPU": "cpu",
+            "AMD (HIP)": "hip"
+        }
+        self.rb_cpu = QRadioButton("CPU")
+        self.rb_cuda = QRadioButton("CUDA (Nvidia)")
+        self.rb_hip = QRadioButton("AMD (HIP)")
+        self.device_btns = [self.rb_cpu, self.rb_cuda, self.rb_hip]
+        device_layout.addWidget(self.rb_cpu)
+        device_layout.addWidget(self.rb_cuda)
+        device_layout.addWidget(self.rb_hip)
+        grp_device.setLayout(device_layout)
+        training_layout.addRow("Compute Device:", grp_device)
+
+        # Check the radio that matches
+        if device_str.lower() == "cuda":
+            self.rb_cuda.setChecked(True)
+        elif device_str.lower() == "hip":
+            self.rb_hip.setChecked(True)
+        else:
+            self.rb_cpu.setChecked(True)
+
+        grp_params.setLayout(training_layout)
+        train_box_layout.addWidget(grp_data)
+        train_box_layout.addWidget(grp_params)
+        train_box_layout.addWidget(grp_device)
+
+        grp_train_box.setLayout(train_box_layout)
+
+        # 최종적으로 main 레이아웃에 추가
+        layout.addWidget(grp_train_box)
+        ####################################################################################
+        # Label Save Mode 설정 (auto 또는 manual 선택)
+        grp_label = QGroupBox("Label Save Mode")
+        label_layout = QHBoxLayout()
+        self.combo_label_save_mode = QComboBox()
+        self.combo_label_save_mode.addItems(["auto", "manual"])
+        # 기본값 설정: settings["other_settings"]["label_save_mode"]
+        other_settings = self.settings.get("other_settings", {})
+        label_save_mode = other_settings.get("label_save_mode", "auto")
+        index_mode = self.combo_label_save_mode.findText(label_save_mode)
+        if index_mode != -1:
+            self.combo_label_save_mode.setCurrentIndex(index_mode)
+        label_layout.addWidget(QLabel("Label Save Mode:"))
+        label_layout.addWidget(self.combo_label_save_mode)
+        grp_label.setLayout(label_layout)
+        layout.addWidget(grp_label)
+
+        # selected save location
+        grp_save = QGroupBox("Save Location")
+        save_layout = QFormLayout()
+
+        # Existing save path
+        self.save_path_edit = QLineEdit(self.db_service.get_global_setting('settings_path'))  # 기본 경로 표시
+        btn_browse_save = QPushButton("Browse")
+        btn_browse_save.clicked.connect(self.browse_save_location)
+        save_layout.addRow("Settings Path:", self._path_row(self.save_path_edit, btn_browse_save))
+
+        # New row for results path
+        self.results_path_edit = QLineEdit(self.settings.get("results", {}).get("path", ""))
+        btn_browse_results = QPushButton("Browse")
+        btn_browse_results.clicked.connect(lambda: self.browse_dir(self.results_path_edit))
+        save_layout.addRow("Results Path:", self._path_row(self.results_path_edit, btn_browse_results))
+
+        grp_save.setLayout(save_layout)
+        layout.addWidget(grp_save)
+
+        # Full JSON read-only display (optional)
+        grp_json = QGroupBox("Raw JSON (read-only)")
+        json_layout = QVBoxLayout()
+        self.json_edit = QPlainTextEdit(json.dumps(self.settings, indent=2))
+        self.json_edit.setReadOnly(True)
+        json_layout.addWidget(self.json_edit)
+        grp_json.setLayout(json_layout)
+        layout.addWidget(grp_json)
+        ####################################################################################
+        # Buttons
+        # 버튼 영역: 불러오기 / 저장
+        btn_layout = QHBoxLayout()
+        btn_load = QPushButton("설정 불러오기")
+        btn_load.clicked.connect(self.load_from_disk)
+        btn_layout.addWidget(btn_load)
+        btn_save = QPushButton("저장하기")
+        btn_save.clicked.connect(self.save_to_disk)
+        btn_layout.addWidget(btn_save)
+
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def _path_row(self, line_edit, btn):
+        row_widget = QWidget()
+        row_layout = QHBoxLayout()
+        row_layout.addWidget(line_edit)
+        row_layout.addWidget(btn)
+        row_layout.setContentsMargins(0, 0, 0, 0)
+        row_widget.setLayout(row_layout)
+        return row_widget
+
+    def browse_file(self, line_edit):
+        current_path = line_edit.text()
+        initial_path = os.path.dirname(current_path) if current_path else ""
+        path, _ = QFileDialog.getOpenFileName(self, "Browse file", initial_path, "All Files (*.*)")
+        if path:
+            line_edit.setText(path)
+
+    def browse_dir(self, line_edit):
+        current_path = line_edit.text()
+        initial_dir = current_path if os.path.isdir(current_path) else ""
+        d = QFileDialog.getExistingDirectory(self, "Browse directory", initial_dir)
+        if d:
+            line_edit.setText(d)
+
+    def browse_save_location(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Settings As...", "", "JSON Files (*.json)")
+        if path:
+            self.save_path_edit.setText(path)
+
+    def save_to_disk(self):
+        training_config = self.db_service.get_training_config()
+        if training_config:
+            # settings에 저장된 값으로 업데이트
+            self.db_service.update_training_config(training_config['id'], {
+                "YOLO_model": self.model_path_edit.text(),
+                "data_yaml": self.data_yaml_edit.text(),
+                "epochs": self.epochs_spin.value(),
+                "batch_size": self.batch_spin.value(),
+                "device": self.device_choices[self.device_btns[0].text()]
+            })
+
+    def update_ui_fields(self):
+        """UI 위젯에 현재 settings 값을 적용합니다."""
+        # 모델 설정
+        self.detector_path_edit.setText(self.settings.get("detector_model_path", ""))
+        self.llm_model_edit.setText(self.settings.get("llm_model", ""))
+        # 데이터 설정
+        data = self.settings.get("data", {})
+        self.path_edit.setText(data.get("path", ""))
+        self.train_path_edit.setText(data.get("train", ""))
+        self.val_path_edit.setText(data.get("val", ""))
+        # Training 설정
+        training = self.settings.get("training", {})
+        self.spin_epochs.setValue(training.get("epochs", 50))
+        self.spin_batch.setValue(training.get("batch_size", 16))
+        imgsz = training.get("imgsz", 640)
+        index_imgsz = self.combo_imgsz.findText(str(imgsz))
+        if index_imgsz >= 0:
+            self.combo_imgsz.setCurrentIndex(index_imgsz)
+        # Device 설정
+        device = training.get("device", "cpu").lower()
+        for rb in self.device_btns:
+            if self.device_choices[rb.text()].lower() == device:
+                rb.setChecked(True)
+            else:
+                rb.setChecked(False)
+        # Raw JSON 업데이트
+        self.json_edit.setPlainText(json.dumps(self.settings, indent=2))
+
+    def load_from_disk(self):
+        # 파일 선택 다이얼로그를 통해 설정 파일 선택 (확인 버튼 누르면 바로 파일 경로 반환)
+        file_path, _ = QFileDialog.getOpenFileName(self, "Load Settings", "", "JSON Files (*.json)")
+        if file_path:
+            # Worker를 생성하여 QThreadPool에 제출
+            worker = LoadSettingsWorker(file_path, self)
+            QThreadPool.globalInstance().start(worker)
+
+    @pyqtSlot(dict)
+    def update_ui_fields_from_worker(self, new_settings):
+        # 백그라운드에서 로드한 설정을 UI에 적용 (메인 스레드에서 실행됨)
+        self.settings = new_settings
+        self.update_ui_fields()
+        QMessageBox.information(self, "Loaded", "Settings loaded from file.")
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/learning_model/training_model.py
+===============================
+import os
+
+from PyQt5.QtCore import pyqtSignal, QUrl, QTimer
+from PyQt5.QtGui import QDesktopServices
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QPlainTextEdit, QGroupBox, QLineEdit, QSpinBox, \
+    QFileDialog, QFormLayout, QLabel, QHBoxLayout, QMessageBox
+from models.custom_yolo.common.device import DeviceChecker
+from models.custom_yolo.core.services.db_service import DBService
+from models.custom_yolo.infrastructure.computer_vision.learning_model.training_worker import TrainingWorker
+
+# -------------------------------------------------------------
+# Resource cache: training resource 초기화를 위한 캐시
+_resource_cache = {}
+
+
+class TrainingModel(QWidget):
+    finished = pyqtSignal(str)
+    progress = pyqtSignal(int)
+    log_signal = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, db_service: DBService):
+        super().__init__()
+        self.db_service = db_service
+        self.log_area = QPlainTextEdit()
+        self.log_area.setReadOnly(True)
+
+        self.model_path_edit = QLineEdit()
+        self.data_yaml_edit = QLineEdit()
+        self.epochs_spin = QSpinBox()
+        self.batch_spin = QSpinBox()
+
+        self.worker = None
+
+        self.init_ui()
+        self.load_training_config_into_ui()
+
+    def init_ui(self):
+        layout = QVBoxLayout()
+
+        # 로그 출력
+        layout.addWidget(QLabel("Training Log"))
+        layout.addWidget(self.log_area)
+
+        # 모델 구성 그룹
+        grp_model = QGroupBox("Training Model Configuration")
+        f_layout = QFormLayout()
+
+        # YOLO model path
+        btn_select_model = QPushButton("Browse")
+        btn_select_model.clicked.connect(self.select_model_file)
+        row_model = self._make_row(self.model_path_edit, btn_select_model)
+        f_layout.addRow("select YOLO model [.pt] : ", row_model)
+
+        # Data YAML path
+        btn_select_data = QPushButton("Browse")
+        btn_select_data.clicked.connect(self.select_data_file)
+        row_data = self._make_row(self.data_yaml_edit, btn_select_data)
+        f_layout.addRow("select custom data [.yaml] : ", row_data)
+
+        # epochs
+        self.epochs_spin.setRange(1, 1000)
+        f_layout.addRow("epochs:", self.epochs_spin)
+
+        # batch
+        self.batch_spin.setRange(1, 128)
+        f_layout.addRow("batch size:", self.batch_spin)
+
+        grp_model.setLayout(f_layout)
+        layout.addWidget(grp_model)
+
+        # 버튼 레이아웃
+        btn_layout = QHBoxLayout()
+        train_btn = QPushButton("학습 시작")
+        train_btn.clicked.connect(self.start_training)
+        btn_layout.addWidget(train_btn)
+
+        cancel_btn = QPushButton("학습 중단")
+        cancel_btn.clicked.connect(self.cancel_training)
+        btn_layout.addWidget(cancel_btn)
+
+        layout.addLayout(btn_layout)
+        self.setLayout(layout)
+
+    def _make_row(self, line_edit, btn):
+        """Helper to horizontally place a line-edit + button in a single row."""
+        w = QWidget()
+        l = QHBoxLayout()
+        l.addWidget(line_edit)
+        l.addWidget(btn)
+        l.setContentsMargins(0, 0, 0, 0)
+        w.setLayout(l)
+        return w
+
+    def load_training_config_into_ui(self):
+        """DB에서 training_config 정보를 읽어서 UI에 반영합니다."""
+        training_config = self.db_service.get_training_config()
+        if training_config:
+            self.model_path_edit.setText(training_config.get("YOLO_model", "custom_yolo.pt"))
+            self.data_yaml_edit.setText(training_config.get("data_yaml", "custom_data.yaml"))
+            self.epochs_spin.setValue(training_config.get("epochs", 50))
+            self.batch_spin.setValue(training_config.get("batch_size", 16))
+            device = training_config.get("device", "cpu")
+        else:
+            self.model_path_edit.setText("custom_yolo.pt")
+            self.data_yaml_edit.setText("custom_data.yaml")
+            self.epochs_spin.setValue(50)
+            self.batch_spin.setValue(16)
+            device = "cpu"
+
+    def update_resources(self, resources):
+        """
+        메인 창에서 리소스가 변경되었을 때 호출되는 메서드입니다.
+        리소스는 다른 탭에서 업데이트된 것을 반영합니다.
+        """
+        self.current_resources.update(resources)
+        self.log_area.appendPlainText(f"Resource updated: {resources}")
+
+    def select_model_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select YOLO model", "", "YOLO Model (*.pt)")
+        # change custom model path in db
+        if path:
+            self.model_path_edit.setText(path)
+            row = self.db_service.get_training_config()
+            if row:
+                self.db_service.update_model_path(row['id'], path)
+            else:
+                self.db_service.insert_model_path(path)
+
+    def select_data_file(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select data.yaml", "", "YAML files (*.yaml *.yml)")
+        if path:
+            self.data_yaml_edit.setText(path)
+            row = self.db_service.get_training_config()
+            if row:
+                self.db_service.update_training_config(row['id'], path)
+            else:
+                self.db_service.insert_training_config(
+                    epochs=50, batch_size=16, device="cpu", imgsz=640,
+                    YOLO_model="yolov8n.pt", custom_model_path="", data_yaml=path,
+                    data_config_id=1, results_config_id=1, model_paths_id=1
+                )
+
+    def start_training(self):
+        # device checking
+        row = self.db_service.get_training_config()
+        if row:
+            device = row.get("device", "cpu")
+            try:
+                DeviceChecker().validate_training_device(device)
+            except ValueError as e:
+                QMessageBox.critical(self, "Device Error", str(e))
+                return
+        else:
+            QMessageBox.critical(self, "Error", "No training configuration found! Please set up training config.")
+            return
+
+        model_path = self.model_path_edit.text().strip()
+        data_yaml = self.data_yaml_edit.text().strip()
+        epochs = self.epochs_spin.value()
+        batch = self.batch_spin.value()
+
+        self.worker = TrainingWorker(
+            model_path=model_path,
+            data_yaml=data_yaml,
+            epochs=epochs,
+            batch=batch,
+            device=device
+        )
+        self.worker.log_signal.connect(self.log_area.appendPlainText)
+        self.worker.progress.connect(lambda p: self.log_area.appendPlainText(f"{p}%"))
+        self.worker.finished.connect(self.handle_training_finished)
+        self.worker.error.connect(self.handle_training_error)
+        self.worker.start()
+
+    def cancel_training(self):
+        if self.worker and self.worker.isRunning():
+            self.worker.cancel()
+            QMessageBox.information(self, "Cancelled", "학습 작업이 중단 되었습니다.")
+            self.log_area.appendPlainText("학습 중단 요청됨.")
+
+    def handle_training_finished(self, best_model):
+        self.log_area.appendPlainText(f"학습 완료! best_model: {best_model}")
+
+    def handle_training_error(self, err_msg):
+        self.log_area.appendPlainText(f"학습 오류 발생: {err_msg}")
+
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/learning_model/training_worker.py
+===============================
+from PyQt5.QtCore import QThread, pyqtSignal
+from ultralytics import YOLO
+
+
+class TrainingWorker(QThread):
+    finished = pyqtSignal(str)
+    progress = pyqtSignal(int)
+    log_signal = pyqtSignal(str)
+    error = pyqtSignal(str)
+
+    def __init__(self, model_path, data_yaml, epochs, batch, device):
+        super().__init__()
+        self._is_cancelled = None
+        self.model_path = model_path
+        self.data_yaml = data_yaml
+        self.epochs = epochs
+        self.batch = batch
+        self.device = device
+
+    def run(self):
+        try:
+            self._is_cancelled = False
+            model = YOLO(self.model_path)
+            self.log_signal.emit(f"모델 로드 완료 \n"
+                                 f"--------전체 정보-------\n"
+                                 f"[모델] {self.model_path}, [데이터] {self.data_yaml}, [연산장치] {self.device}\n"
+                                 f"------------------------\n")
+
+            for epoch in range(self.epochs):
+                if self._is_cancelled:
+                    self.log_signal.emit("학습 중단 signal 수신. 학습 중단 중...")
+                    return
+
+                model.train(
+                    data=self.data_yaml,
+                    epochs=self.epochs,
+                    batch=self.batch,
+                    imgsz=640,
+                    device=self.device,
+                    verbose=False,
+                    plots=True
+                )
+
+                # 학습 진행률 업데이트
+                self.log_signal.emit(f"Epoch {epoch+1}/{self.epochs} 진행 중...")
+                self.msleep(500)
+                self.progress.emit(int((epoch + 1) / self.epochs * 100 ))
+
+            # 학습 완료 후 최적 모델 경로 반환
+            save_dir = model.trainer.save_dir
+            best_model = f"{save_dir}/weights/best.pt"
+            self.finished.emit(best_model)
+        except Exception as e:
+            self.error.emit(f"학습 오류: {str(e)}")
+
+    def cancel(self):
+        self._is_cancelled = True
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/computer_vision/multi_worker/thread_worker.py
+===============================
+# Worker 클래스 정의 (QRunnable 사용)
+import os
+
+from PyQt5.QtCore import QRunnable, pyqtSlot, QMetaObject, Qt, Q_ARG
+
+from models.custom_yolo.core.services.convert_document import DocuConverter
+from models.custom_yolo.common.observer_pattern.observer_registry import DocumentConversionSignals
+from models.custom_yolo.infrastructure.storage.SettingsManager import Settings
+
+from concurrent.futures import ThreadPoolExecutor
+
+_executor = ThreadPoolExecutor(max_workers=1)
+
+
+class SaveSettingsWorker(QRunnable):
+    def __init__(self, settings, save_path):
+        super().__init__()
+        self.settings = settings
+        self.save_path = save_path
+
+    @pyqtSlot()
+    def run(self):
+        # 파일 I/O는 이 run() 내에서 처리됨
+        try:
+            # 예시: settings_manager의 update_and_save() 메서드 호출
+            Settings().update_and_save(self.settings, self.save_path)
+        except Exception as e:
+            # 오류 발생 시 로깅 혹은 별도 처리 (메시지 박스는 메인 스레드에서 처리해야 함)
+            print("Error saving settings:", e)
+
+
+class LoadSettingsWorker(QRunnable):
+    def __init__(self, file_path, callback):
+        super().__init__()
+        self.file_path = file_path
+        self.callback = callback  # 작업 완료 후 메인 스레드에서 호출할 콜백 함수
+
+    @pyqtSlot()
+    def run(self):
+        # 파일 I/O는 여기서 처리 (메인 스레드와 분리됨)
+        try:
+            Settings().reload_settings(self.file_path)
+            new_settings = Settings().all_settings
+        except Exception as e:
+            new_settings = {}
+            print("Error loading settings:", e)
+        # 메인 스레드에서 UI 업데이트를 수행하도록 invokeMethod 사용
+        QMetaObject.invokeMethod(self.callback, "update_ui_fields_from_worker",
+                                 Qt.QueuedConnection,
+                                 Q_ARG(dict, new_settings))
+
+
+class DocumentConversionRunnable(QRunnable):
+    def __init__(self, doc_path, dpi=300, output_dir=None, poppler_path=None):
+        super(DocumentConversionRunnable, self).__init__()
+        self.doc_path = doc_path
+        self.dpi = dpi
+        self.signals = DocumentConversionSignals()
+
+    @pyqtSlot()
+    def run(self):
+        ext = os.path.splitext(self.doc_path)[1].lower()
+        output_dir = os.path.dirname(self.doc_path)
+        try:
+            self.signals.log.emit(f"문서 변환 시작: {self.doc_path}")
+            if ext in [".doc", ".docx"]:
+                jpg_files = DocuConverter.word_to_jpg(self.doc_path, output_dir, dpi=self.dpi)
+            elif ext == ".hwp":
+                jpg_files = DocuConverter.hwp_to_jpg(self.doc_path, output_dir, dpi=self.dpi)
+            elif ext == ".pdf":
+                jpg_files = DocuConverter.pdf_to_jpg(self.doc_path, output_dir, dpi=self.dpi)
+            else:
+                raise Exception("지원되지 않는 파일 형식입니다.")
+            self.signals.log.emit(f"변환 완료: {len(jpg_files)}개의 JPG 파일 생성됨")
+            self.signals.finished.emit(jpg_files)
+        except Exception as e:
+            self.signals.error.emit(e)
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/storage/SQLite_connector.py
+===============================
+import json
+import os
+import sqlite3
+import threading
+from definition import ROOT_DIR
+from models.custom_yolo.core.services.db_service import DBService
+from models.custom_yolo.resources.sql.db_init_load import DB_INIT_QUERY
+
+
+class SQLiteConnector:
+    _instance = None
+    _lock = threading.Lock()
+
+    def __new__(cls):
+        with cls._lock:
+            if not cls._instance:
+                cls._instance = super().__new__(cls)
+                cls._instance._init_connection()
+        return cls._instance
+
+    def _init_connection(self):
+        self.db_path = os.path.join(ROOT_DIR, 'models/custom_yolo/core/domain/settings.sqlite')
+        if not os.path.exists(self.db_path):
+            DBService().init_schema(DB_INIT_QUERY().get_init_query())
+        """데이터베이스 연결 초기화"""
+        self.conn = sqlite3.connect(
+            self.db_path,
+            check_same_thread=False,
+            detect_types=sqlite3.PARSE_DECLTYPES
+        )
+        self.conn.row_factory = sqlite3.Row
+        self.conn.execute("PRAGMA journal_mode=WAL")  # 성능 개선
+
+    @property
+    def connection(self):
+        """활성화된 연결 객체 반환"""
+        if not self.conn:
+            self._init_connection()
+        return self.conn
+
+    def close(self):
+        """명시적 연결 종료"""
+        if self.conn:
+            self.conn.close()
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/infrastructure/__init__.py
+===============================
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/main.py
+===============================
+import sys
+
+from PyQt5.QtWidgets import QApplication
+
+from models.custom_yolo.core.services.db_service import DBService
+from models.custom_yolo.infrastructure.computer_vision.label_model.gui_main import MainWindow
+
+
+def main():
+    # init) DB 연결 초기화 및 접속 객체 생성
+    DBService()
+    app = QApplication(sys.argv)
+    window = MainWindow()
+    window.show()
+    sys.exit(app.exec_())
+
+
+if __name__ == "__main__":
+    main()
+
+===============================
+FILE: /c/WorkSpace/git/ExamCollector/models/custom_yolo/resources/sql/db_init_load.py
+===============================
+class DB_INIT_QUERY:
+
+    def __init__(self):
+        self.query = """
+        PRAGMA foreign_keys = ON;
+        
+        BEGIN TRANSACTION;
+        
+        -- 테이블 존재 시 삭제(주의: 실제 운영에서는 신중하게 사용)
+        DROP TABLE IF EXISTS training_config;
+        DROP TABLE IF EXISTS labeling_config;
+        DROP TABLE IF EXISTS other_settings;
+        DROP TABLE IF EXISTS data_config;
+        DROP TABLE IF EXISTS results_config;
+        DROP TABLE IF EXISTS model_paths;
+        DROP TABLE IF EXISTS class_info;
+        DROP TABLE IF EXISTS document_converter;
+        DROP TABLE IF EXISTS global_settings;
+        
+        -- 1) document_converter
+        CREATE TABLE document_converter
+        (
+            id            INTEGER PRIMARY KEY,
+            poppler_path  TEXT    DEFAULT '/usr/bin/poppler',
+            output_dir    TEXT    DEFAULT './output'
+        );
+        
+        -- 2) global_settings
+        CREATE TABLE global_settings
+        (
+            key   TEXT PRIMARY KEY,
+            value TEXT NOT NULL
+        );
+        
+        -- 3) class_info
+        CREATE TABLE class_info
+        (
+            class_idx   INTEGER PRIMARY KEY,
+            class_name  TEXT NOT NULL
+        );
+        
+        -- 4) data_config
+        CREATE TABLE data_config
+        (
+            id          INTEGER PRIMARY KEY,
+            base_path   TEXT,
+            train_path  TEXT,
+            val_path    TEXT
+        );
+        
+        -- 5) results_config
+        CREATE TABLE results_config
+        (
+            id           INTEGER PRIMARY KEY,
+            base_path    TEXT,
+            train_path   TEXT,
+            val_path     TEXT
+        );
+        
+        -- 6) model_paths
+        CREATE TABLE model_paths
+        (
+            id                    INTEGER PRIMARY KEY,
+            detector_model_path   TEXT,
+            llm_model             TEXT
+        );
+        
+        -- 7) labeling_config
+        CREATE TABLE labeling_config
+        (
+            id                  INTEGER PRIMARY KEY,
+            device              TEXT    DEFAULT 'cpu'
+                                   CHECK (device IN ('cpu','cuda','hip')),
+            label_save_mode     TEXT    DEFAULT 'manual',
+            llm_max_retries     INTEGER DEFAULT 5,
+            detect_imgsz        INTEGER DEFAULT 640,
+            detect_conf         REAL    DEFAULT 0.5,
+            llm_max_new_tokens  INTEGER DEFAULT 10000
+        );
+        
+        -- 8) other_settings
+        CREATE TABLE other_settings
+        (
+            id          INTEGER PRIMARY KEY,
+            use_gpu     INTEGER DEFAULT 0,  -- 0=false, 1=true
+            log_level   TEXT    DEFAULT 'INFO'
+        );
+        
+        -- 9) training_config
+        CREATE TABLE training_config
+        (
+            id              INTEGER PRIMARY KEY,
+            epochs          INTEGER DEFAULT 50,
+            batch_size      INTEGER DEFAULT 16,
+            device          TEXT    DEFAULT 'cpu'
+                               CHECK (device IN ('cpu','cuda','hip')),
+            imgsz           INTEGER DEFAULT 640,
+            YOLO_model      TEXT,
+            custom_model_path TEXT,
+            data_yaml       TEXT,
+        
+            data_config_id    INTEGER REFERENCES data_config(id),
+            results_config_id INTEGER REFERENCES results_config(id),
+            model_paths_id    INTEGER REFERENCES model_paths(id)
+        );
+        
+        COMMIT;
+        """
+
+    def get_init_query(self):
+        return self.query
+

@@ -1,0 +1,377 @@
+INSERT INTO class_info (class_idx, class_name) VALUES (0, 'question');
+INSERT INTO class_info (class_idx, class_name) VALUES (1, 'answer');
+INSERT INTO class_info (class_idx, class_name) VALUES (2, 'figure');
+INSERT INTO class_info (class_idx, class_name) VALUES (3, 'etc');
+INSERT INTO class_info (class_idx, class_name) VALUES (4, 'q_num');
+INSERT INTO class_info (class_idx, class_name) VALUES (5, 'q_type');
+INSERT INTO data_config (id, base_path, train_path, val_path) VALUES (1, 'C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/test-2', 'train/images', 'valid/images');
+INSERT INTO document_converter (id, poppler_path, output_dir) VALUES (1, 'C:/poppler-24.08.0/Library/bin', 'C:/');
+PRAGMA foreign_keys = ON;  -- SQLite에서 FK 제약조건 활성화
+
+BEGIN TRANSACTION;
+
+/*
+ * 이미 작성하셨던 기존 테이블들
+ */
+CREATE TABLE document_converter
+(
+    id            INTEGER PRIMARY KEY,
+    poppler_path  TEXT    DEFAULT '/usr/bin/poppler',
+    output_dir    TEXT    DEFAULT './output'
+);
+
+CREATE TABLE global_settings
+(
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
+
+/*
+ * training_config에 YOLO_model, custom_model_path, data_yaml
+ * 등을 추가로 저장할 수 있도록 칼럼을 확장
+ */
+CREATE TABLE training_config
+(
+    id              INTEGER PRIMARY KEY,
+    epochs          INTEGER DEFAULT 50,
+    batch_size      INTEGER DEFAULT 16,
+    device          TEXT    DEFAULT 'cpu'
+                       CHECK (device IN ('cpu', 'cuda', 'hip')),
+    imgsz           INTEGER DEFAULT 640,
+    YOLO_model      TEXT,   -- ex) "C:/.../yolo11n.pt"
+    custom_model_path TEXT, -- ex) "custom.pt"
+    data_yaml       TEXT    -- ex) "C:/.../custom_data.yaml"
+);
+
+/*
+ * 1) class_info:
+ *    "0": "question", "1": "answer" 처럼
+ *    클래스 인덱스와 클래스 이름을 매핑
+ */
+CREATE TABLE class_info
+(
+    class_idx   INTEGER PRIMARY KEY,
+    class_name  TEXT NOT NULL
+);
+
+/*
+ * 2) labeling_config:
+ *    labeling 관련 JSON("labeling": {...})을 저장
+ */
+CREATE TABLE labeling_config
+(
+    id                  INTEGER PRIMARY KEY,
+    device              TEXT    DEFAULT 'cpu'
+                           CHECK (device IN ('cpu', 'cuda', 'hip')),
+    label_save_mode     TEXT    DEFAULT 'manual', -- ex) 'manual' or 'auto'
+    llm_max_retries     INTEGER DEFAULT 5,
+    detect_imgsz        INTEGER DEFAULT 640,
+    detect_conf         REAL    DEFAULT 0.5,      -- 0.0 ~ 1.0
+    llm_max_new_tokens  INTEGER DEFAULT 10000
+);
+
+/*
+ * 3) other_settings:
+ *    "use_gpu", "log_level" 등
+ *    단순 key-value를 넘어 세부 필드가 필요한 경우 테이블 분리
+ */
+CREATE TABLE other_settings
+(
+    id          INTEGER PRIMARY KEY,
+    use_gpu     INTEGER DEFAULT 0,  -- 0=false, 1=true
+    log_level   TEXT    DEFAULT 'INFO'
+);
+
+/*
+ * 4) data_config:
+ *    "data": { "path": "...", "train": "...", "val": "..." } 를 저장
+ */
+CREATE TABLE data_config
+(
+    id          INTEGER PRIMARY KEY,
+    base_path   TEXT,  -- data.path
+    train_path  TEXT,  -- data.train
+    val_path    TEXT   -- data.val
+);
+
+/*
+ * 5) results_config:
+ *    "results": {"path": "...", "train": "...", "val": "..."} 를 저장
+ */
+CREATE TABLE results_config
+(
+    id           INTEGER PRIMARY KEY,
+    base_path    TEXT,  -- results.path
+    train_path   TEXT,  -- results.train
+    val_path     TEXT   -- results.val
+);
+
+/*
+ * 6) model_paths:
+ *    "detector_model_path", "llm_model" 등을 저장
+ */
+CREATE TABLE model_paths
+(
+    id                    INTEGER PRIMARY KEY,
+    detector_model_path   TEXT,  -- ex) "C:/.../best.pt"
+    llm_model             TEXT   -- ex) "microsoft/phi-2"
+);
+
+/*
+ * 예: training_config가 data_config, results_config, model_paths를 참조하게끔
+ *    (원할 경우 외래키 관계를 추가)
+ */
+ALTER TABLE training_config ADD COLUMN data_config_id INTEGER REFERENCES data_config(id);
+ALTER TABLE training_config ADD COLUMN results_config_id INTEGER REFERENCES results_config(id);
+ALTER TABLE training_config ADD COLUMN model_paths_id INTEGER REFERENCES model_paths(id);
+
+COMMIT;
+INSERT INTO global_settings (key, value) VALUES ('settings_path', 'C:/WorkSpace/git/ExamCollector/models/custom_yolo/core/domain/settings.json');
+BEGIN TRANSACTION;
+
+/*
+ * model_paths (detector_model_path, llm_model)
+ * JSON:
+ *   "detector_model_path": "C:/WorkSpace/git/ExamCollector/runs/detect/train12/weights/best.pt",
+ *   "llm_model": "microsoft/phi-2"
+ */
+INSERT INTO model_paths (id, detector_model_path, llm_model)
+VALUES (
+  1,
+  'C:/WorkSpace/git/ExamCollector/runs/detect/train12/weights/best.pt',
+  'microsoft/phi-2'
+);
+
+
+/*
+ * data_config (base_path, train_path, val_path)
+ * JSON:
+ *   "data": {
+ *     "path": "C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/test-2",
+ *     "train": "train/images",
+ *     "val": "valid/images"
+ *   }
+ */
+INSERT INTO data_config (id, base_path, train_path, val_path)
+VALUES (
+  1,
+  'C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/test-2',
+  'train/images',
+  'valid/images'
+);
+
+
+/*
+ * results_config (base_path, train_path, val_path)
+ * JSON:
+ *   "results": {
+ *     "path": "C:/WorkSpace/git/ExamCollector/models/custom_yolo/model/label_model/results",
+ *     "train": "train",
+ *     "val": "val"
+ *   }
+ */
+INSERT INTO results_config (id, base_path, train_path, val_path)
+VALUES (
+  1,
+  'C:/WorkSpace/git/ExamCollector/models/custom_yolo/model/label_model/results',
+  'train',
+  'val'
+);
+
+
+/*
+ * class_info (class_idx, class_name)
+ * JSON:
+ *   "class_info": {
+ *     "0": "question",
+ *     "1": "answer",
+ *     "2": "figure",
+ *     "3": "etc",
+ *     "4": "q_num",
+ *     "5": "q_type"
+ *   }
+ */
+INSERT INTO class_info (class_idx, class_name) VALUES (0, 'question');
+INSERT INTO class_info (class_idx, class_name) VALUES (1, 'answer');
+INSERT INTO class_info (class_idx, class_name) VALUES (2, 'figure');
+INSERT INTO class_info (class_idx, class_name) VALUES (3, 'etc');
+INSERT INTO class_info (class_idx, class_name) VALUES (4, 'q_num');
+INSERT INTO class_info (class_idx, class_name) VALUES (5, 'q_type');
+
+
+/*
+ * training_config
+ * JSON ("training"): {
+ *   "epochs": 100,
+ *   "batch_size": 50,
+ *   "device": "cuda",
+ *   "imgsz": 640,
+ *   "YOLO_model": "...",
+ *   "custom_model_path": "...",
+ *   "data_yaml": "..."
+ * }
+ *  + 연결될 FK:
+ *    data_config_id    = 1
+ *    results_config_id = 1
+ *    model_paths_id    = 1
+ */
+INSERT INTO training_config (
+    id, epochs, batch_size, device, imgsz,
+    YOLO_model, custom_model_path, data_yaml,
+    data_config_id, results_config_id, model_paths_id
+)
+VALUES (
+  1,
+  100,
+  50,
+  'cuda',
+  640,
+  'C:/WorkSpace/git/ExamCollector/models/custom_yolo/model/label_model/yolo11n.pt',
+  'custom.pt',
+  'C:/WorkSpace/git/ExamCollector/models/custom_yolo/core/use_cases/custom_data.yaml',
+  1,
+  1,
+  1
+);
+
+
+/*
+ * labeling_config
+ * JSON ("labeling"): {
+ *   "device": "cpu",
+ *   "label_save_mode": "manual",
+ *   "llm_max_retries": 5,
+ *   "detect_imgsz": 640,
+ *   "detect_conf": 0.5,
+ *   "llm_max_new_tokens": 10000
+ * }
+ */
+INSERT INTO labeling_config (
+    id, device, label_save_mode, llm_max_retries,
+    detect_imgsz, detect_conf, llm_max_new_tokens
+)
+VALUES (
+  1,
+  'cpu',
+  'manual',
+  5,
+  640,
+  0.5,
+  10000
+);
+
+
+/*
+ * other_settings
+ * JSON ("other_settings"): {
+ *   "use_gpu": true,
+ *   "log_level": "INFO"
+ * }
+ * use_gpu = true -> 1
+ */
+INSERT INTO other_settings (id, use_gpu, log_level)
+VALUES (
+  1,
+  1,
+  'INFO'
+);
+
+
+/*
+ * document_converter
+ * JSON ("document_converter"): {
+ *   "poppler_path": "C:/poppler-24.08.0/Library/bin",
+ *   "output_dir": "C:/"
+ * }
+ */
+INSERT INTO document_converter (id, poppler_path, output_dir)
+VALUES (
+  1,
+  'C:/poppler-24.08.0/Library/bin',
+  'C:/'
+);
+
+
+/*
+ * global_settings
+ * JSON ("settings_path"): "C:/WorkSpace/git/ExamCollector/models/custom_yolo/core/domain/settings.json"
+ *   -> key/value
+ */
+INSERT INTO global_settings (key, value)
+VALUES (
+  'settings_path',
+  'C:/WorkSpace/git/ExamCollector/models/custom_yolo/core/domain/settings.json'
+);
+
+COMMIT;
+INSERT INTO labeling_config (id, device, label_save_mode, llm_max_retries, detect_imgsz, detect_conf, llm_max_new_tokens) VALUES (1, 'cpu', 'manual', 5, 640, 0.5, 10000);
+INSERT INTO model_paths (id, detector_model_path, llm_model) VALUES (1, 'C:/WorkSpace/git/ExamCollector/runs/detect/train12/weights/best.pt', 'microsoft/phi-2');
+INSERT INTO other_settings (id, use_gpu, log_level) VALUES (1, 1, 'INFO');
+INSERT INTO results_config (id, base_path, train_path, val_path) VALUES (1, 'C:/WorkSpace/git/ExamCollector/models/custom_yolo/model/label_model/results', 'train', 'val');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'document_converter', 'document_converter', 2, 'CREATE TABLE document_converter
+(
+    id            INTEGER PRIMARY KEY,
+    poppler_path  TEXT    DEFAULT ''/usr/bin/poppler'',
+    output_dir    TEXT    DEFAULT ''./output''
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'global_settings', 'global_settings', 3, 'CREATE TABLE global_settings
+(
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('index', 'sqlite_autoindex_global_settings_1', 'global_settings', 4, null);
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'training_config', 'training_config', 5, 'CREATE TABLE training_config
+(
+    id              INTEGER PRIMARY KEY,
+    epochs          INTEGER DEFAULT 50,
+    batch_size      INTEGER DEFAULT 16,
+    device          TEXT    DEFAULT ''cpu''
+                       CHECK (device IN (''cpu'', ''cuda'', ''hip'')),
+    imgsz           INTEGER DEFAULT 640,
+    YOLO_model      TEXT,   -- ex) "C:/.../yolo11n.pt"
+    custom_model_path TEXT, -- ex) "custom.pt"
+    data_yaml       TEXT    -- ex) "C:/.../custom_data.yaml"
+, data_config_id INTEGER REFERENCES data_config(id), results_config_id INTEGER REFERENCES results_config(id), model_paths_id INTEGER REFERENCES model_paths(id))');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'class_info', 'class_info', 6, 'CREATE TABLE class_info
+(
+    class_idx   INTEGER PRIMARY KEY,
+    class_name  TEXT NOT NULL
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'labeling_config', 'labeling_config', 7, 'CREATE TABLE labeling_config
+(
+    id                  INTEGER PRIMARY KEY,
+    device              TEXT    DEFAULT ''cpu''
+                           CHECK (device IN (''cpu'', ''cuda'', ''hip'')),
+    label_save_mode     TEXT    DEFAULT ''manual'', -- ex) ''manual'' or ''auto''
+    llm_max_retries     INTEGER DEFAULT 5,
+    detect_imgsz        INTEGER DEFAULT 640,
+    detect_conf         REAL    DEFAULT 0.5,      -- 0.0 ~ 1.0
+    llm_max_new_tokens  INTEGER DEFAULT 10000
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'other_settings', 'other_settings', 8, 'CREATE TABLE other_settings
+(
+    id          INTEGER PRIMARY KEY,
+    use_gpu     INTEGER DEFAULT 0,  -- 0=false, 1=true
+    log_level   TEXT    DEFAULT ''INFO''
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'data_config', 'data_config', 9, 'CREATE TABLE data_config
+(
+    id          INTEGER PRIMARY KEY,
+    base_path   TEXT,  -- data.path
+    train_path  TEXT,  -- data.train
+    val_path    TEXT   -- data.val
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'results_config', 'results_config', 10, 'CREATE TABLE results_config
+(
+    id           INTEGER PRIMARY KEY,
+    base_path    TEXT,  -- results.path
+    train_path   TEXT,  -- results.train
+    val_path     TEXT   -- results.val
+)');
+INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) VALUES ('table', 'model_paths', 'model_paths', 11, 'CREATE TABLE model_paths
+(
+    id                    INTEGER PRIMARY KEY,
+    detector_model_path   TEXT,  -- ex) "C:/.../best.pt"
+    llm_model             TEXT   -- ex) "microsoft/phi-2"
+)');
+INSERT INTO training_config (id, epochs, batch_size, device, imgsz, YOLO_model, custom_model_path, data_yaml, data_config_id, results_config_id, model_paths_id) VALUES (1, 100, 50, 'cuda', 640, 'C:/WorkSpace/git/ExamCollector/models/custom_yolo/model/label_model/yolo11n.pt', 'custom.pt', 'C:/WorkSpace/git/ExamCollector/models/custom_yolo/core/use_cases/custom_data.yaml', 1, 1, 1);
