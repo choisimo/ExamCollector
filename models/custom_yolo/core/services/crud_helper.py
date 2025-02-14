@@ -2,6 +2,8 @@ import sqlite3
 from dataclasses import dataclass
 from typing import List, Any, Dict, Optional
 
+from models.custom_yolo.common.error_handling.db_logger import handle_db_errors
+
 
 @dataclass
 class TableSchema:
@@ -20,6 +22,7 @@ class CRUDHelper:
         """
         return ', '.join(['?'] * len(columns))
 
+    @handle_db_errors
     def create(self, table: TableSchema, data: Dict[str, Any]) -> int:
         """INSERT into {table.name} (columns...) values (?,...)"""
         # 테이블에 실제 존재하는 컬럼만 추출
@@ -34,6 +37,7 @@ class CRUDHelper:
             cur = self.conn.execute(query, values)
             return cur.lastrowid
 
+    @handle_db_errors
     def update(self, table: TableSchema, id_val: Any, data: Dict[str, Any]) -> None:
         """UPDATE {table.name} SET col=?... WHERE pk=?"""
         columns = [col for col in data if col in table.columns]
@@ -47,6 +51,7 @@ class CRUDHelper:
         with self.conn:
             self.conn.execute(query, values)
 
+    @handle_db_errors
     def get(self, table: TableSchema, id_val: Any) -> Optional[Dict[str, Any]]:
         """SELECT * FROM {table.name} WHERE pk=?"""
         query = f"SELECT * FROM {table.name} WHERE {table.pk} = ?"
@@ -54,6 +59,7 @@ class CRUDHelper:
         row = cur.fetchone()
         return dict(row) if row else None
 
+    @handle_db_errors
     def get_all(self, table: TableSchema) -> List[Dict[str, Any]]:
         """SELECT * FROM {table.name}"""
         query = f"SELECT * FROM {table.name}"

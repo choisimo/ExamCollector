@@ -22,6 +22,7 @@ class TrainingModel(QWidget):
     def __init__(self, db_service: DBService):
         super().__init__()
         self.db_service = db_service
+        self.current_config_id = None  # 현재 활성 설정 ID 추적
         self.log_area = QPlainTextEdit()
         self.log_area.setReadOnly(True)
 
@@ -92,21 +93,35 @@ class TrainingModel(QWidget):
         w.setLayout(l)
         return w
 
-    def load_training_config_into_ui(self):
-        """DB에서 training_config 정보를 읽어서 UI에 반영합니다."""
-        training_config = self.db_service.get_training_config()
-        if training_config:
-            self.model_path_edit.setText(training_config.get("YOLO_model", "custom_yolo.pt"))
-            self.data_yaml_edit.setText(training_config.get("data_yaml", "custom_data.yaml"))
-            self.epochs_spin.setValue(training_config.get("epochs", 50))
-            self.batch_spin.setValue(training_config.get("batch_size", 16))
-            device = training_config.get("device", "cpu")
+    def load_training_config(self, config: dict):
+        """
+        DB에서 training_config 정보를 읽어서
+        """
+        _latest_config = self.db_service.get_training_config()
+        if config:
+            self.current_config_id = config['id']
+            self._update_ui_from_config(config)
         else:
-            self.model_path_edit.setText("custom_yolo.pt")
-            self.data_yaml_edit.setText("custom_data.yaml")
-            self.epochs_spin.setValue(50)
-            self.batch_spin.setValue(16)
-            device = "cpu"
+            self._create_default_config()
+
+    def _update_ui_from_config(self, config: dict):
+        """UI 요소 업데이트"""
+        self.model_path_edit.setText(config.get('YOLO_model', ''))
+        self.data_yaml_edit.setText(config.get('data_yaml', ''))
+        self.epochs_spin.setValue(config.get('epochs', 50))
+        self.batch_spin.setValue(config.get('batch_size', 16))
+
+    def _create_default_config(self):
+        """기본 설정 생성"""
+        default_data = {
+            'epochs': 50,
+            'batch_size': 16,
+            'device': 'cpu',
+            'imgsz': 640,
+            'YOLO_model': 'yolov11n.pt',
+            'data_yaml': 'custom_data.yaml'
+        }
+        self.current_config_id = self.db_service.insert_training_config(default_data)
 
     def update_resources(self, resources):
         """
@@ -121,12 +136,10 @@ class TrainingModel(QWidget):
         # change custom model path in db
         if path:
             self.model_path_edit.setText(path)
-            row = self.db_service.get_training_config()
-            if row:
-                self.db_service.update_model_path(row['id'], path)
-            else:
-                self.db_service.insert_model_path(path)
+            self._update_db_config({'YOLO_model': path})
 
+    def _update_db_config(self, new_config):
+        if self.
     def select_data_file(self):
         path, _ = QFileDialog.getOpenFileName(self, "Select data.yaml", "", "YAML files (*.yaml *.yml)")
         if path:

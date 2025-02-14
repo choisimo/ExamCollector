@@ -38,6 +38,13 @@ class DocumentConverterSchema(TableSchema):
 
 
 @dataclass
+class GlobalSettingsSchema(TableSchema):
+    name: str = "global_settings"
+    pk: str = "key"
+    columns: list = ("key", "value")
+
+
+@dataclass
 class ClassInfoSchema(TableSchema):
     name: str = "class_info"
     pk: str = "class_idx"

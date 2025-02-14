@@ -5,13 +5,11 @@ import win32com.client as win32
 from pdf2image import convert_from_path
 from pathlib import Path
 
-
 # 배치 변환 함수 (여러 PDF 파일을 동시에 변환)
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from models.custom_yolo.common.error_handling.app_logger import conversion_wrapper
 from models.custom_yolo.core.services.db_service import DBService
-
 
 
 class DocuConverter:
@@ -167,9 +165,9 @@ class DocuConverter:
         pdf_path = DocuConverter.hwp_to_pdf(hwp_path)
         return DocuConverter.pdf_to_jpg(pdf_path, output_dir, dpi, poppler_path)
 
-# --------------------------------------------------------------------------
-# 배치 변환 함수 (여러 PDF를 동시에 JPG 변환)
-# --------------------------------------------------------------------------
+    # --------------------------------------------------------------------------
+    # 배치 변환 함수 (여러 PDF를 동시에 JPG 변환)
+    # --------------------------------------------------------------------------
     @staticmethod
     @conversion_wrapper
     def batch_convert(pdf_list, max_workers=4):
