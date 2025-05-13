@@ -1,6 +1,7 @@
 # data.yaml
 
-# (선택) base 경로
+# (선택) base 경로 
+# @TODO 경로 유동적으로 변경 (하드코딩 제거)
 path: C:/WorkSpace/git/ExamCollector/models/custom_yolo/data/test-2
 # 필수: 학습/검증 이미지와 라벨 경로
 train: train/images
