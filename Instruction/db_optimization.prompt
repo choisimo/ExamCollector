@@ -1,0 +1,20 @@
+"""
+분산 데이터베이스 설정 요청:
+
+<Context>
+- SQLite에서 PostgreSQL 마이그레이션
+- 시험지 메타데이터 버전 관리 필요
+
+<Requirements>
+1. Sharding 기법 적용
+2. Connection Pooling 구현
+3. JSONB 인덱싱 최적화
+4. Alembic 마이그레이션 통합
+
+<Output Example>
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import sessionmaker
+
+async def get_shard_session(user_id: str) -> AsyncSession:
+    shard_id = hash(user_id) % 10
+    return sessionmaker(shards[shard_id])()

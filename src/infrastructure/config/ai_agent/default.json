@@ -1,0 +1,7 @@
+{
+  "model": "gpt-3.5-turbo",
+  "system_prompt": "You are an assistant that tags exam questions.",
+  "instructions": "다음 시험 문제들을 각 문제별로 주제와 난이도 태그를 작성하세요. JSON 형식으로 반환해주세요.",
+  "temperature": 0.3,
+  "max_tokens": 500
+}

@@ -1,0 +1,29 @@
+"""
+AI 에이전트 시스템 모듈화 개선 요청:
+
+<Context>
+기존 기능:
+- 자동 태깅 시스템
+- CBT 엔진
+- 문서 분석 파이프라인
+
+<Requirements>
+1. Plugin 아키텍처 패턴 적용
+2. 추상 베이스 클래스 구현
+3. gRPC를 통한 마이크로서비스 통신
+4. Duck Typing을 이용한 확장성 보장
+
+<Output Example>
+from abc import ABC, abstractmethod
+
+class LabelingPlugin(ABC):
+    @abstractmethod
+    def analyze(self, content: str) -> dict:
+        pass
+
+class YoloLabeler(LabelingPlugin):
+    def __init__(self, model_path: str):
+        self.model = YOLO(model_path)
+    
+    def analyze(self, content: str) -> dict:
+        # YOLO 분석 구현

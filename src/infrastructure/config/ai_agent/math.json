@@ -1,0 +1,7 @@
+{
+  "model": "gpt-3.5-turbo",
+  "system_prompt": "You are an assistant specialized in tagging math exam questions.",
+  "instructions": "각 수학 문제에 대해 개념 태그(예: 미적분, 선형대수)와 난이도(쉬움, 보통, 어려움)를 JSON 형식으로 반환해주세요.",
+  "temperature": 0.2,
+  "max_tokens": 500
+}

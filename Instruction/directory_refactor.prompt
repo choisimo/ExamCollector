@@ -1,0 +1,22 @@
+"""
+기존 구조 분석 후 계층형 아키텍처 재구성 요청:
+
+<Context>
+현재 디렉토리 구조:
+{user_provided_directory_tree}
+과학적 학습법 기반 AI 시스템 요구사항:
+- YOLOv8 통합
+- 다중 에이전트 협업
+- 실시간 데이터 파이프라인
+
+<Requirements>
+1. Clean Architecture 적용 (Entities, Use Cases, Interface Adapters)
+2. 의존성 주입을 위한 DI 컨테이너 구현
+3. AI 컴포넌트와 도메인 로직 분리
+4. 설정 관리 전용 모듈 추가
+
+<Output Format>
+1. 개선된 디렉토리 트리 (tree 명령어 형식)
+2. 모듈 상호작용 시퀀스 다이어그램 설명
+3. 핵심 인터페이스 코드 스켈레톤
+"""

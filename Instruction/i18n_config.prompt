@@ -1,0 +1,18 @@
+"""
+다국어 지원 시스템 구현 요청:
+
+<Context>
+- 현재 en_US만 지원
+- JSON 기반 언어 파일 사용
+
+<Requirements>
+1. gettext 표준 준수
+2. 동적 언어 전환 기능
+3. 번역 캐싱 메커니즘
+4. Right-to-Left 언어 지원
+
+<Output Format>
+1. 언어 파일 구조 제안
+2. Locale 관리 클래스 코드
+3. 템플릿 엔진 통합 예시
+"""
