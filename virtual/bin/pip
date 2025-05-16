@@ -1,4 +1,4 @@
-#!/workspace/ExamCollector/virtual/bin/python3
+#!/workspace/ExamCollector/virtual/bin/python
 # -*- coding: utf-8 -*-
 import re
 import sys

@@ -1,7 +1,5 @@
 import os
-import io
-tempfile
-import cv2
+import tempfile
 from fastapi import UploadFile
 from typing import List, Dict
 from models.custom_yolo.infrastructure.computer_vision.label_model.auto_labeler import AutoLabeler
