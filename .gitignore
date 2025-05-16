@@ -1,3 +1,92 @@
-_pycache_
-virtual
-virtual/*
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C extensions
+*.so
+
+# Distribution / packaging
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.nox/
+.coverage
+.coverage.*
+.cache
+nosetests.xml
+coverage.xml
+*.cover
+.hypothesis/
+.pytest_cache/
+pytestdebug.log
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# PyCharm & VSCode
+.idea/
+.vscode/
+*.code-workspace
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# profiling data
+.prof
+
+# Cython build
+cython_debug/
+
+# C, C++ build artifacts
+*.o
+*.obj
+*.dll
+*.a
+*.lib
+*.so
+*.dylib
+*.pyd
+
+# Fortran module files
+*.mod
+*.smod
+
+# Local envs, virtual envs
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+virtual/
+.virtualenv/
+.virtualenvs/
+
+# 기타 시스템 파일
+.DS_Store
+Thumbs.db
+
+# 빌드 스크립트 등에서 생성되는 임시 파일
+*.log
